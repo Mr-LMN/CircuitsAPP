@@ -5,9 +5,6 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 
-	// This line makes the page wait for the guard
-	export let data;
-
 	async function handleSignOut() {
 		await signOut(auth);
 		// After signing out, redirect the user to the home page

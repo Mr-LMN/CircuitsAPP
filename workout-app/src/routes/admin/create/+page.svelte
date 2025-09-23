@@ -4,9 +4,6 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 
-	// This line is essential to make the page wait for the load function
-	export let data;
-
 	let title = '';
 	let type = 'Circuit'; // Default value
 	let mode = 'Individual'; // Default value
