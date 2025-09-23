@@ -1,12 +1,28 @@
-import { user } from '$lib/store';
+import { user, loading } from '$lib/store';
 import { get } from 'svelte/store';
 import { redirect } from '@sveltejs/kit';
 
-export function load() {
-  const currentUser = get(user);
+/**
+ * @type {import('./$types').LayoutLoad}
+ */
+export async function load() {
+	const waitForAuth = new Promise((resolve) => {
+		const unsubscribe = loading.subscribe((isLoading) => {
+			if (!isLoading) {
+				unsubscribe();
+				resolve();
+			}
+		});
+	});
 
-  // If there is no user logged in, they cannot access the admin area.
-  if (!currentUser) {
-    throw redirect(307, '/');
-  }
+	await waitForAuth;
+
+	const currentUser = get(user);
+	if (!currentUser) {
+		throw redirect(307, '/');
+	}
+
+	return {
+		waitForAuth
+	};
 }

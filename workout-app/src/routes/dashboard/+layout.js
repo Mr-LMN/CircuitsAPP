@@ -1,14 +1,28 @@
-// src/routes/dashboard/+layout.js
-import { user } from '$lib/store';
+import { user, loading } from '$lib/store';
 import { get } from 'svelte/store';
 import { redirect } from '@sveltejs/kit';
 
-export function load() {
-	// Get the current value of the user from the store
-	const currentUser = get(user);
+/**
+ * @type {import('./$types').LayoutLoad}
+ */
+export async function load() {
+	const waitForAuth = new Promise((resolve) => {
+		const unsubscribe = loading.subscribe((isLoading) => {
+			if (!isLoading) {
+				unsubscribe();
+				resolve();
+			}
+		});
+	});
 
-	// If there is no user logged in, redirect them to the home page
+	await waitForAuth;
+
+	const currentUser = get(user);
 	if (!currentUser) {
 		throw redirect(307, '/');
 	}
+
+	return {
+		waitForAuth
+	};
 }
