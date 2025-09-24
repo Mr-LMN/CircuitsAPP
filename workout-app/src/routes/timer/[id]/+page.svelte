@@ -1,6 +1,7 @@
 <script>
 // @ts-nocheck
 import { onDestroy } from 'svelte';
+import { goto } from '$app/navigation';
 
 export let data;
 const { workout } = data;
@@ -63,7 +64,7 @@ function tick() { state.remaining -= 0.1; const secs = Math.ceil(state.remaining
 function startTimer() { if (state.isComplete || state.isRunning || totalStations === 0) return; if (state.phaseIndex === -1) { advancePhase(); } state.isRunning = true; timerId = setInterval(tick, 100); }
 function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); }
 function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; }
-function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); }
+function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); goto(`/log-score/${workout.id}`); }
 function initializeAndStart() { commitAllAssignments(); isSetupVisible = false; resetTimer(); startTimer(); }
 function openSetup() { pauseTimer(); isSetupVisible = true; }
 function closeSetup() { commitAllAssignments(); isSetupVisible = false; }
