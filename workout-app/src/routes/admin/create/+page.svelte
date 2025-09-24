@@ -1,66 +1,98 @@
 <script>
+	import { onMount } from 'svelte';
 	import { db, auth } from '$lib/firebase';
-	import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+	import { collection, addDoc, serverTimestamp, getDocs, doc, setDoc } from 'firebase/firestore';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 
+	// Form state
 	let title = '';
-	let type = 'Circuit'; // Default value
-	let mode = 'Individual'; // Default value
+	let type = 'Circuit';
+	let mode = 'Individual'; // Default mode is now Individual
+	let isBenchmark = false;
 	let notes = '';
-	let exercises = [{ name: '', description: '' }]; // Start with one empty exercise
 
+	// This will now hold different shaped objects based on the 'mode'
+	let exercises = [{ name: '', description: '' }];
+
+	// UI state
 	let isSubmitting = false;
 	let successMessage = '';
 	let errorMessage = '';
+	let allExerciseNames = [];
 
-	// Function to add a new blank exercise to our list
-	function addExercise() {
-		exercises = [...exercises, { name: '', description: '' }];
+	// This reactive statement automatically resets the exercises when the mode changes
+	$: {
+		if (mode === 'Partner') {
+			exercises = [{ name: 'Station 1', p1_task: '', p2_task: '' }];
+		} else {
+			exercises = [{ name: '', description: '' }];
+		}
 	}
 
-	// Function to remove an exercise by its index
-	/**
-	 * @param {number} index
-	 */
+	onMount(async () => {
+		const querySnapshot = await getDocs(collection(db, 'exercises'));
+		allExerciseNames = querySnapshot.docs.map((doc) => doc.data().name);
+	});
+
+	function addExercise() {
+		if (mode === 'Partner') {
+			exercises = [
+				...exercises,
+				{ name: `Station ${exercises.length + 1}`, p1_task: '', p2_task: '' }
+			];
+		} else {
+			exercises = [...exercises, { name: '', description: '' }];
+		}
+	}
+
 	function removeExercise(index) {
 		exercises = exercises.filter((_, i) => i !== index);
 	}
 
-	// Function to handle the form submission
 	async function saveWorkout() {
-		if (!title || exercises.some((ex) => !ex.name)) {
-			errorMessage = 'Workout title and all exercise names are required.';
+		// Validation logic needs to be aware of the different structures
+		const isInvalid =
+			mode === 'Partner'
+				? exercises.some((ex) => !ex.name || !ex.p1_task || !ex.p2_task)
+				: exercises.some((ex) => !ex.name);
+
+		if (!title || isInvalid) {
+			errorMessage = 'Workout title and all required exercise/task fields are required.';
 			return;
 		}
 
 		isSubmitting = true;
 		errorMessage = '';
 		successMessage = '';
-
 		try {
-			const currentUser = auth.currentUser;
-
-			if (!currentUser) {
-				errorMessage = 'You must be logged in to create workouts.';
-				return;
-			}
-
 			const workoutData = {
 				title,
 				type,
 				mode,
+				isBenchmark,
 				notes,
 				exercises,
-				creatorId: currentUser.uid, // Get the UID of the logged-in user
+				creatorId: auth.currentUser.uid,
 				createdAt: serverTimestamp()
 			};
-
 			await addDoc(collection(db, 'workouts'), workoutData);
 
+			for (const exercise of exercises) {
+				// We can save both individual exercises and P1/P2 tasks to autocomplete
+				const namesToSave =
+					mode === 'Partner' ? [exercise.p1_task, exercise.p2_task] : [exercise.name];
+				for (const name of namesToSave) {
+					const exerciseName = name.trim();
+					if (exerciseName) {
+						const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
+						await setDoc(exerciseRef, { name: exerciseName });
+					}
+				}
+			}
+
 			successMessage = 'Workout saved successfully!';
-			// Optional: Redirect after a short delay
-			setTimeout(() => goto(resolve('/dashboard')), 1500);
+			setTimeout(() => goto(resolve('/admin/workouts')), 1500);
 		} catch (error) {
 			console.error('Error saving workout: ', error);
 			errorMessage = 'Failed to save workout. Please try again.';
@@ -83,52 +115,90 @@
 				required
 			/>
 		</div>
-
 		<div class="split-group">
 			<div class="form-group">
 				<label for="type">Workout Type</label>
 				<select id="type" bind:value={type}>
-					<option>Circuit</option>
-					<option>AMRAP</option>
-					<option>EMOM</option>
+					<option>Circuit</option> <option>AMRAP</option> <option>EMOM</option>
 					<option>Timed Rounds</option>
 				</select>
 			</div>
 			<div class="form-group">
 				<label for="mode">Participation Mode</label>
 				<select id="mode" bind:value={mode}>
-					<option>Individual</option>
-					<option>Partner</option>
+					<option>Individual</option> <option>Partner</option>
 				</select>
 			</div>
 		</div>
-
 		<div class="form-group">
-			<label for="notes">Notes / Instructions</label>
-			<textarea id="notes" bind:value={notes} rows="3" placeholder="Optional notes for the class"
-			></textarea>
+			<label for="notes">Notes / Instructions (for equipment, technique, etc.)</label>
+			<textarea id="notes" bind:value={notes} rows="3"></textarea>
+		</div>
+		<div class="form-group-checkbox">
+			<input id="benchmark" type="checkbox" bind:checked={isBenchmark} />
+			<label for="benchmark">Make this a Benchmark Workout</label>
 		</div>
 
 		<fieldset>
 			<legend>Exercises</legend>
-			{#each exercises as exercise, i (i)}
-				<div class="exercise-item">
-					<input
-						type="text"
-						bind:value={exercise.name}
-						placeholder={`Exercise #${i + 1} Name`}
-						required
-					/>
-					<input
-						type="text"
-						bind:value={exercise.description}
-						placeholder="Description (e.g., 12 reps, 45s)"
-					/>
-					<button type="button" class="remove-btn" on:click={() => removeExercise(i)}
-						>&times;</button
-					>
-				</div>
-			{/each}
+			<datalist id="exercise-suggestions">
+				{#each allExerciseNames as name (name)}
+					<option value={name}></option>
+				{/each}
+			</datalist>
+
+			{#if mode === 'Partner'}
+				{#each exercises as exercise, i (i)}
+					<div class="exercise-item partner">
+						<input
+							class="station-name"
+							type="text"
+							bind:value={exercise.name}
+							placeholder="Station #{i + 1} Name"
+							required
+						/>
+						<div class="partner-tasks">
+							<input
+								type="text"
+								bind:value={exercise.p1_task}
+								placeholder="P1 Task (e.g., Treadmill)"
+								required
+								list="exercise-suggestions"
+							/>
+							<input
+								type="text"
+								bind:value={exercise.p2_task}
+								placeholder="P2 Task (e.g., Plank)"
+								required
+								list="exercise-suggestions"
+							/>
+						</div>
+						<button type="button" class="remove-btn" on:click={() => removeExercise(i)}
+							>&times;</button
+						>
+					</div>
+				{/each}
+			{:else}
+				{#each exercises as exercise, i (i)}
+					<div class="exercise-item">
+						<input
+							type="text"
+							bind:value={exercise.name}
+							placeholder="Exercise #{i + 1} Name"
+							required
+							list="exercise-suggestions"
+						/>
+						<input
+							type="text"
+							bind:value={exercise.description}
+							placeholder="Description (e.g., 12 reps, 45s)"
+						/>
+						<button type="button" class="remove-btn" on:click={() => removeExercise(i)}
+							>&times;</button
+						>
+					</div>
+				{/each}
+			{/if}
 			<button type="button" class="secondary-btn" on:click={addExercise}>+ Add Exercise</button>
 		</fieldset>
 
@@ -138,14 +208,14 @@
 		{#if errorMessage}
 			<p class="error-message">{errorMessage}</p>
 		{/if}
-
-		<button type="submit" class="primary-btn" disabled={isSubmitting}>
-			{isSubmitting ? 'Saving...' : 'Save Workout'}
-		</button>
+		<button type="submit" class="primary-btn" disabled={isSubmitting}
+			>{isSubmitting ? 'Saving...' : 'Save Workout'}</button
+		>
 	</form>
 </div>
 
 <style>
+	/* ... (all previous styles) ... */
 	.form-container {
 		width: 100%;
 		max-width: 700px;
@@ -167,7 +237,8 @@
 	.split-group > .form-group {
 		flex: 1;
 	}
-	select {
+	select,
+	textarea {
 		width: 100%;
 		background-color: var(--bg);
 		border: 1px solid var(--border-color);
@@ -175,6 +246,8 @@
 		color: var(--text);
 		padding: 0.75rem;
 		font-size: 1rem;
+	}
+	select {
 		-webkit-appearance: none;
 		-moz-appearance: none;
 		appearance: none;
@@ -184,13 +257,6 @@
 		background-size: 1.25em;
 	}
 	textarea {
-		width: 100%;
-		background-color: var(--bg);
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text);
-		padding: 0.75rem;
-		font-size: 1rem;
 		font-family: inherit;
 	}
 	fieldset {
@@ -235,13 +301,52 @@
 		text-align: center;
 		margin-top: 1rem;
 	}
-	.error-message {
-		color: var(--error);
-		background-color: rgba(220, 38, 38, 0.15);
-		border: 1px solid var(--error);
-		padding: 0.75rem;
-		border-radius: 8px;
-		text-align: center;
+	.form-group-checkbox {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
 		margin-top: 1rem;
+		padding: 0.75rem;
+		background-color: var(--bg);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+	}
+	.form-group-checkbox input[type='checkbox'] {
+		width: 1.25em;
+		height: 1.25em;
+	}
+	.secondary-btn {
+		border: 1px solid var(--border-color);
+		background: none;
+		color: var(--text-muted);
+		padding: 0.5rem 1rem;
+		border-radius: 8px;
+		cursor: pointer;
+		display: block;
+		width: 100%;
+		margin-top: 0.5rem;
+	}
+
+	/* NEW styles for Partner form */
+	.exercise-item.partner {
+		flex-direction: column;
+		align-items: stretch;
+		background: rgba(0, 0, 0, 0.2);
+		padding: 1rem;
+		border-radius: 8px;
+		position: relative;
+	}
+	.exercise-item.partner .remove-btn {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+	}
+	.station-name {
+		font-weight: bold;
+		margin-bottom: 0.75rem;
+	}
+	.partner-tasks {
+		display: flex;
+		gap: 0.5rem;
 	}
 </style>
