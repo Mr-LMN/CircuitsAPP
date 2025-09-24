@@ -396,9 +396,10 @@ onDestroy(() => clearInterval(timerId));
 
 .timer-layout {
         width: min(1700px, 98vw);
-        display: flex;
-        flex-direction: column;
-        gap: 2rem;
+        display: grid;
+        grid-template-columns: minmax(360px, 1.15fr) minmax(320px, 0.85fr);
+        align-items: start;
+        gap: 2.25rem;
         background: linear-gradient(160deg, #080f0c, #050806);
         border: 1px solid #66ff9914;
         border-radius: 28px;
@@ -410,6 +411,7 @@ onDestroy(() => clearInterval(timerId));
         display: flex;
         flex-direction: column;
         gap: 1.5rem;
+        min-width: 0;
 }
 
 .station-overview__header {
@@ -460,8 +462,9 @@ onDestroy(() => clearInterval(timerId));
 
 .station-strip {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        grid-auto-rows: minmax(150px, auto);
+        gap: 1.1rem;
 }
 
 .empty-state {
@@ -484,10 +487,10 @@ onDestroy(() => clearInterval(timerId));
         border: 1px solid #66ff9914;
         border-radius: 18px;
         padding: 1rem 1.1rem;
-        display: flex;
-        flex-direction: column;
+        display: grid;
+        grid-template-rows: auto 1fr;
         gap: 0.75rem;
-        min-height: 160px;
+        min-height: 150px;
         transition: border-color 200ms ease, transform 200ms ease, box-shadow 200ms ease, background 200ms ease;
 }
 
@@ -499,14 +502,15 @@ onDestroy(() => clearInterval(timerId));
 }
 
 .station-card__header {
-        display: flex;
+        display: grid;
+        grid-template-columns: auto 1fr;
         align-items: flex-start;
-        gap: 0.75rem;
+        gap: 0.65rem;
 }
 
 .station-number {
-        width: 36px;
-        height: 36px;
+        width: 34px;
+        height: 34px;
         border-radius: 50%;
         background: rgba(255, 255, 255, 0.08);
         color: #ffffffbf;
@@ -523,6 +527,13 @@ onDestroy(() => clearInterval(timerId));
         color: #050505;
 }
 
+.station-card__title {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        min-width: 0;
+}
+
 .station-card__title h3 {
         margin: 0;
         font-size: 1.05rem;
@@ -533,14 +544,14 @@ onDestroy(() => clearInterval(timerId));
         display: flex;
         flex-direction: column;
         gap: 0.35rem;
-        margin-top: 0.35rem;
 }
 
 .task-line {
-        display: flex;
-        align-items: center;
-        gap: 0.45rem;
-        font-size: 0.88rem;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: flex-start;
+        gap: 0.4rem;
+        font-size: 0.9rem;
 }
 
 .task-label {
@@ -569,8 +580,9 @@ onDestroy(() => clearInterval(timerId));
 
 .task-text {
         color: #e6f0e8;
-        line-height: 1.3;
-        flex: 1;
+        line-height: 1.35;
+        word-break: break-word;
+        overflow-wrap: anywhere;
 }
 
 .station-card__roster {
@@ -579,19 +591,19 @@ onDestroy(() => clearInterval(timerId));
         border-top: 1px solid #66ff9914;
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
+        gap: 0.55rem;
 }
 
 .roster-line {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 0.6rem;
         flex-wrap: wrap;
 }
 
 .roster-title {
-        font-size: 0.7rem;
+        font-size: 0.72rem;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         color: #ffffff7d;
@@ -600,16 +612,16 @@ onDestroy(() => clearInterval(timerId));
 .roster-chips {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.3rem;
+        gap: 0.35rem;
 }
 
 .roster-chips span {
         display: inline-flex;
-        padding: 0.18rem 0.55rem;
+        padding: 0.2rem 0.6rem;
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.1);
         color: #ffffffe0;
-        font-size: 0.78rem;
+        font-size: 0.8rem;
         font-weight: 600;
         letter-spacing: 0.06em;
 }
@@ -650,6 +662,7 @@ onDestroy(() => clearInterval(timerId));
         gap: 2rem;
         align-items: center;
         text-align: center;
+        min-width: 0;
 }
 
 .timer-header {
@@ -792,13 +805,33 @@ onDestroy(() => clearInterval(timerId));
         filter: brightness(1.05);
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1280px) {
         .timer-layout {
-                padding: 2rem;
+                grid-template-columns: minmax(320px, 1.1fr) minmax(280px, 0.9fr);
+                padding: 2.25rem;
+                gap: 2rem;
         }
 
         .station-strip {
-                grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+}
+
+@media (max-width: 1080px) {
+        .timer-layout {
+                grid-template-columns: 1fr;
+                padding: 2rem;
+                gap: 1.75rem;
+        }
+
+        .timer-panel {
+                margin-top: 0.5rem;
+        }
+}
+
+@media (min-width: 1600px) {
+        .station-strip {
+                grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
         }
 }
 
