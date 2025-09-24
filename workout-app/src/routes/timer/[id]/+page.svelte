@@ -460,8 +460,8 @@ onDestroy(() => clearInterval(timerId));
 
 .station-strip {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 1.25rem;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
 }
 
 .empty-state {
@@ -483,11 +483,11 @@ onDestroy(() => clearInterval(timerId));
         background: #121b16;
         border: 1px solid #66ff9914;
         border-radius: 18px;
-        padding: 1.25rem 1.4rem;
+        padding: 1rem 1.1rem;
         display: flex;
         flex-direction: column;
-        gap: 1rem;
-        min-height: 190px;
+        gap: 0.75rem;
+        min-height: 160px;
         transition: border-color 200ms ease, transform 200ms ease, box-shadow 200ms ease, background 200ms ease;
 }
 
@@ -501,12 +501,12 @@ onDestroy(() => clearInterval(timerId));
 .station-card__header {
         display: flex;
         align-items: flex-start;
-        gap: 0.9rem;
+        gap: 0.75rem;
 }
 
 .station-number {
-        width: 42px;
-        height: 42px;
+        width: 36px;
+        height: 36px;
         border-radius: 50%;
         background: rgba(255, 255, 255, 0.08);
         color: #ffffffbf;
@@ -514,7 +514,7 @@ onDestroy(() => clearInterval(timerId));
         align-items: center;
         justify-content: center;
         font-weight: 700;
-        font-size: 1.05rem;
+        font-size: 0.95rem;
         flex-shrink: 0;
 }
 
@@ -525,32 +525,32 @@ onDestroy(() => clearInterval(timerId));
 
 .station-card__title h3 {
         margin: 0;
-        font-size: 1.15rem;
+        font-size: 1.05rem;
         font-weight: 600;
 }
 
 .station-card__tasks {
         display: flex;
         flex-direction: column;
-        gap: 0.45rem;
-        margin-top: 0.5rem;
+        gap: 0.35rem;
+        margin-top: 0.35rem;
 }
 
 .task-line {
         display: flex;
         align-items: center;
-        gap: 0.5rem;
-        font-size: 0.95rem;
+        gap: 0.45rem;
+        font-size: 0.88rem;
 }
 
 .task-label {
-        width: 32px;
-        height: 32px;
+        width: 28px;
+        height: 28px;
         border-radius: 999px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         font-weight: 700;
         letter-spacing: 0.08em;
 }
@@ -569,29 +569,29 @@ onDestroy(() => clearInterval(timerId));
 
 .task-text {
         color: #e6f0e8;
-        line-height: 1.35;
+        line-height: 1.3;
         flex: 1;
 }
 
 .station-card__roster {
         margin-top: auto;
-        padding-top: 0.75rem;
+        padding-top: 0.6rem;
         border-top: 1px solid #66ff9914;
         display: flex;
         flex-direction: column;
-        gap: 0.6rem;
+        gap: 0.5rem;
 }
 
 .roster-line {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 0.75rem;
+        gap: 0.6rem;
         flex-wrap: wrap;
 }
 
 .roster-title {
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         color: #ffffff7d;
@@ -600,16 +600,16 @@ onDestroy(() => clearInterval(timerId));
 .roster-chips {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.35rem;
+        gap: 0.3rem;
 }
 
 .roster-chips span {
         display: inline-flex;
-        padding: 0.2rem 0.6rem;
+        padding: 0.18rem 0.55rem;
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.1);
         color: #ffffffe0;
-        font-size: 0.82rem;
+        font-size: 0.78rem;
         font-weight: 600;
         letter-spacing: 0.06em;
 }
@@ -621,7 +621,7 @@ onDestroy(() => clearInterval(timerId));
 }
 
 .roster-destination-station {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         font-weight: 700;
         color: #f0f7f2;
 }
@@ -798,7 +798,7 @@ onDestroy(() => clearInterval(timerId));
         }
 
         .station-strip {
-                grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
         }
 }
 
