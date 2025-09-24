@@ -424,20 +424,19 @@
 		z-index: 1000;
 		backdrop-filter: blur(4px);
 	}
-	.modal-content {
-		background: linear-gradient(145deg, #080c0a, #0d1310);
-		border: 1px solid #66ff9914;
-		border-radius: 20px;
-		padding: 2.5rem;
-		max-width: 720px;
-		width: min(94vw, 720px);
-		text-align: left;
-		box-shadow: 0 30px 70px #00000073;
-		display: flex;
-		flex-direction: column;
-		gap: 1.75rem;
-		max-height: min(90vh, 820px);
-	}
+        .modal-content {
+                background: linear-gradient(145deg, #080c0a, #0d1310);
+                border: 1px solid #66ff9914;
+                border-radius: 20px;
+                padding: 2.5rem;
+                max-width: 720px;
+                width: min(94vw, 720px);
+                box-shadow: 0 30px 70px #00000073;
+                /* The key changes are here: */
+                display: flex;
+                flex-direction: column;
+                max-height: 90vh; /* Set a maximum height */
+        }
 	.modal-content h2 {
 		color: var(--yellow);
 		margin: 0;
@@ -472,11 +471,16 @@
 		color: white;
 		box-shadow: inset 0 0 0 1px #00000066;
 	}
-	.assignment-setup {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
+        .assignment-setup {
+                display: flex;
+                flex-direction: column;
+                gap: 1rem;
+                /* This tells the section to grow and allows it to scroll */
+                overflow-y: auto;
+                flex-grow: 1;
+                padding-right: 1rem; /* Add some space for the scrollbar */
+                margin-right: -1rem; /* Counteract the padding to keep alignment */
+        }
 	.assignment-setup__header h3 {
 		margin: 0;
 		color: var(--yellow);
@@ -523,11 +527,15 @@
 		font-size: 0.95rem;
 		letter-spacing: 0.06em;
 	}
-	.modal-actions {
-		display: flex;
-		gap: 1rem;
-		justify-content: flex-end;
-	}
+        .modal-actions {
+                display: flex;
+                gap: 1rem;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+                /* This ensures the buttons never get pushed off-screen */
+                flex-shrink: 0;
+                margin-top: 1.75rem;
+        }
 	.modal-actions button {
 		border-radius: 10px;
 		font-size: 1rem;
