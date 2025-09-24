@@ -112,10 +112,88 @@
 		}
 		return '';
 	})();
-	$: progress =
-		state.duration > 0
-			? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100))
-			: 0;
+        $: progress =
+                state.duration > 0
+                        ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100))
+                        : 0;
+
+        // --- Station assignment helpers ---
+        let totalStations = workout.exercises?.length ?? 0;
+        $: totalStations = workout.exercises?.length ?? 0;
+
+        let stationAssignments = (workout.exercises ?? []).map(() => []);
+        let assignmentInputs = (workout.exercises ?? []).map(() => '');
+
+        $: if ((workout.exercises?.length ?? 0) !== stationAssignments.length) {
+                const base = workout.exercises ?? [];
+                stationAssignments = base.map((_, index) => stationAssignments[index] ?? []);
+                assignmentInputs = base.map(
+                        (_, index) =>
+                                assignmentInputs[index] ?? stationAssignments[index]?.join(', ') ?? ''
+                );
+        }
+
+        function parseAssignments(value = '') {
+                return value
+                        .split(/[\n,]/)
+                        .map((code) => code.trim())
+                        .filter(Boolean)
+                        .map((code) => code.toUpperCase());
+        }
+
+        function updateAssignmentInput(index, value) {
+                assignmentInputs = assignmentInputs.map((input, i) => (i === index ? value : input));
+                const parsed = parseAssignments(value);
+                stationAssignments = stationAssignments.map((codes, i) => (i === index ? parsed : codes));
+        }
+
+        function commitAssignmentInput(index) {
+                const parsed = parseAssignments(assignmentInputs[index] ?? '');
+                stationAssignments = stationAssignments.map((codes, i) => (i === index ? parsed : codes));
+                assignmentInputs = assignmentInputs.map((input, i) =>
+                        i === index ? parsed.join(', ') : input
+                );
+        }
+
+        function commitAllAssignments() {
+                stationAssignments = stationAssignments.map((codes, index) =>
+                        parseAssignments(assignmentInputs[index] ?? codes.join(', '))
+                );
+                assignmentInputs = stationAssignments.map((codes) => codes.join(', '));
+        }
+
+        $: movesCompleted =
+                totalStations > 0
+                        ? (state.currentRound - 1) * totalStations + state.currentStation
+                        : 0;
+
+        $: stationRoster = (workout.exercises ?? []).map((_, targetIndex) => {
+                if (!totalStations) return [];
+                const roster = [];
+                stationAssignments.forEach((codes, startIndex) => {
+                        if (!codes?.length) return;
+                        const destination = (startIndex + movesCompleted) % totalStations;
+                        if (destination === targetIndex) {
+                                roster.push(...codes);
+                        }
+                });
+                return roster;
+        });
+
+        $: nextStationRoster = (workout.exercises ?? []).map((_, targetIndex) => {
+                if (!totalStations) return [];
+                const roster = [];
+                stationAssignments.forEach((codes, startIndex) => {
+                        if (!codes?.length) return;
+                        const destination = (startIndex + movesCompleted + 1) % totalStations;
+                        if (destination === targetIndex) {
+                                roster.push(...codes);
+                        }
+                });
+                return roster;
+        });
+
+        $: nextStationIndex = totalStations > 0 ? (state.currentStation + 1) % totalStations : 0;
 
 	// --- NEW: Autoscroll Function ---
 	function scrollToCurrentStation() {
@@ -246,17 +324,28 @@
 		whistleBell();
 	}
 
-	function initializeAndStart() {
-		sessionConfig = {
-			work: Math.max(0, Number(sessionConfig.work) || 0),
-			swap: Math.max(0, Number(sessionConfig.swap) || 0),
-			move: Math.max(0, Number(sessionConfig.move) || 0),
-			rounds: Math.max(1, Math.floor(Number(sessionConfig.rounds) || 1))
-		};
-		isSetupVisible = false;
-		resetTimer(); // Initialize state with new config
-		startTimer();
-	}
+        function initializeAndStart() {
+                commitAllAssignments();
+                sessionConfig = {
+                        work: Math.max(0, Number(sessionConfig.work) || 0),
+                        swap: Math.max(0, Number(sessionConfig.swap) || 0),
+                        move: Math.max(0, Number(sessionConfig.move) || 0),
+                        rounds: Math.max(1, Math.floor(Number(sessionConfig.rounds) || 1))
+                };
+                isSetupVisible = false;
+                resetTimer(); // Initialize state with new config
+                startTimer();
+        }
+
+        function openSetup() {
+                pauseTimer();
+                isSetupVisible = true;
+        }
+
+        function closeSetup() {
+                commitAllAssignments();
+                isSetupVisible = false;
+        }
 
 	function formatTime(s) {
 		const secs = Math.max(0, Math.ceil(s));
@@ -273,51 +362,139 @@
 </script>
 
 {#if isSetupVisible}
-	<div class="modal-overlay">
-		<div class="modal-content">
-			<h2>Session Setup</h2>
-			<p>Configure the timer for this workout.</p>
-			<div class="setup-form">
-				<div class="form-group">
-					<label for="work">Work (s)</label>
-					<input id="work" type="number" min="0" bind:value={sessionConfig.work} />
-				</div>
-				<div class="form-group">
-					<label for="swap">Swap (s)</label>
-					<input id="swap" type="number" min="0" bind:value={sessionConfig.swap} />
-				</div>
-				<div class="form-group">
-					<label for="move">Move/Rest (s)</label>
-					<input id="move" type="number" min="0" bind:value={sessionConfig.move} />
-				</div>
-				<div class="form-group">
-					<label for="rounds">Rounds</label>
-					<input id="rounds" type="number" min="1" bind:value={sessionConfig.rounds} />
-				</div>
-			</div>
-			<button class="primary" on:click={initializeAndStart}>Start Session</button>
-		</div>
-	</div>
+        <div class="modal-overlay">
+                <div class="modal-content">
+                        <h2>Session Setup</h2>
+                        <p>Configure the timer for this workout.</p>
+                        <div class="setup-form">
+                                <div class="form-group">
+                                        <label for="work">Work (s)</label>
+                                        <input id="work" type="number" min="0" bind:value={sessionConfig.work} />
+                                </div>
+                                <div class="form-group">
+                                        <label for="swap">Swap (s)</label>
+                                        <input id="swap" type="number" min="0" bind:value={sessionConfig.swap} />
+                                </div>
+                                <div class="form-group">
+                                        <label for="move">Move/Rest (s)</label>
+                                        <input id="move" type="number" min="0" bind:value={sessionConfig.move} />
+                                </div>
+                                <div class="form-group">
+                                        <label for="rounds">Rounds</label>
+                                        <input id="rounds" type="number" min="1" bind:value={sessionConfig.rounds} />
+                                </div>
+                        </div>
+                        <div class="assignment-setup">
+                                <div class="assignment-setup__header">
+                                        <h3>Starting Positions</h3>
+                                        <p>Enter staff initials where each person begins. They rotate automatically every move.</p>
+                                </div>
+                                <div class="assignment-grid">
+                                        {#each workout.exercises as station, i (station.id ?? station.name ?? i)}
+                                                <div class="assignment-card">
+                                                        <label for={`assignment-${i}`}>
+                                                                Station {i + 1}: {station.name}
+                                                        </label>
+                                                        <input
+                                                                id={`assignment-${i}`}
+                                                                placeholder="e.g. AB, CD"
+                                                                bind:value={assignmentInputs[i]}
+                                                                on:input={(event) => updateAssignmentInput(i, event.target.value)}
+                                                                on:blur={() => commitAssignmentInput(i)}
+                                                        />
+                                                        {#if stationAssignments[i]?.length}
+                                                                <div class="assignment-preview">
+                                                                        {#each stationAssignments[i] as code, codeIndex (`${i}-${codeIndex}-${code}`)}
+                                                                                <span class="assignment-chip">{code}</span>
+                                                                        {/each}
+                                                                </div>
+                                                        {/if}
+                                                </div>
+                                        {/each}
+                                </div>
+                        </div>
+                        <div class="modal-actions">
+                                <button class="secondary" on:click={closeSetup}>Close</button>
+                                <button class="primary" on:click={initializeAndStart}>Start Session</button>
+                        </div>
+                </div>
+        </div>
 {/if}
 
 <div class="timer-wrapper" class:blur={isSetupVisible}>
 	{#if workout.mode === 'Partner' && workout.type === 'Circuit'}
 		<div class="partner-circuit-layout">
-			<div class="left-panel">
-				<h2>Stations</h2>
-				<div class="station-list" bind:this={stationListEl}>
-					{#each workout.exercises as station, i (station.id ?? station.name ?? i)}
-						<div class="station-item" class:current={i === state.currentStation} data-index={i}>
-							<div class="station-number">{i + 1}</div>
-							<div class="station-details">
-								<h3>{station.name}</h3>
-								<p class="p1"><span>P1:</span> {station.p1_task}</p>
-								<p class="p2"><span>P2:</span> {station.p2_task}</p>
-							</div>
-						</div>
-					{/each}
-				</div>
-			</div>
+                        <div class="left-panel">
+                                <div class="left-panel-header">
+                                        <h2>Stations</h2>
+                                        <div class="legend">
+                                                <span><span class="legend-dot current"></span>Current</span>
+                                                <span><span class="legend-dot next"></span>Next Up</span>
+                                        </div>
+                                </div>
+                                <div class="station-list" bind:this={stationListEl}>
+                                        {#each workout.exercises as station, i (station.id ?? station.name ?? i)}
+                                                <div
+                                                        class="station-item"
+                                                        class:current={i === state.currentStation}
+                                                        data-index={i}
+                                                >
+                                                        <div class="station-header">
+                                                                <div class="station-number">{i + 1}</div>
+                                                                <div class="station-title">
+                                                                        <h3>{station.name}</h3>
+                                                                </div>
+                                                        </div>
+                                                        <div class="station-body">
+                                                                <div class="task-line">
+                                                                        <span class="task-label p1">P1</span>
+                                                                        <span class="task-text">{station.p1_task}</span>
+                                                                </div>
+                                                                <div class="task-line">
+                                                                        <span class="task-label p2">P2</span>
+                                                                        <span class="task-text">{station.p2_task}</span>
+                                                                </div>
+                                                        </div>
+                                                        <div class="station-assignments">
+                                                                <div class="assignment-row current" class:active={i === state.currentStation}>
+                                                                        <span class="assignment-title">Now</span>
+                                                                        <div class="assignment-chips">
+                                                                                {#if stationRoster[i]?.length}
+                                                                                        {#each stationRoster[i] as code, codeIndex (`current-${i}-${codeIndex}-${code}`)}
+                                                                                                <span class="assignment-chip">{code}</span>
+                                                                                        {/each}
+                                                                                {:else}
+                                                                                        <span class="assignment-empty">Open</span>
+                                                                                {/if}
+                                                                        </div>
+                                                                </div>
+                                                                {#if !state.isComplete}
+                                                                        <div
+                                                                                class="assignment-row next"
+                                                                                class:move-target={state.phaseIndex === 3 && i === nextStationIndex}
+                                                                        >
+                                                                                <span class="assignment-title">Next</span>
+                                                                                <div class="assignment-chips">
+                                                                                        {#if nextStationRoster[i]?.length}
+                                                                                                {#each nextStationRoster[i] as code, codeIndex (`next-${i}-${codeIndex}-${code}`)}
+                                                                                                        <span class="assignment-chip">{code}</span>
+                                                                                                {/each}
+                                                                                        {:else}
+                                                                                                <span class="assignment-empty">Open</span>
+                                                                                        {/if}
+                                                                                </div>
+                                                                        </div>
+                                                                {:else}
+                                                                        <div class="assignment-row next">
+                                                                                <span class="assignment-title">Next</span>
+                                                                                <span class="assignment-empty">Session complete</span>
+                                                                        </div>
+                                                                {/if}
+                                                        </div>
+                                                </div>
+                                        {/each}
+                                </div>
+                        </div>
 			<div class="right-panel">
 				<header class="timer-header">
 					<div class="header-meta">
@@ -342,24 +519,53 @@
 					<div class="progress-bar-container">
 						<div class="progress-bar-fill" style="width: {progress}%"></div>
 					</div>
-					<div class="current-tasks">
-						<div class="task-card p1" class:swap-phase={state.phaseIndex === 2}>
-							<h4>PARTNER 1</h4>
-							<p>{partnerAssignments.p1}</p>
-						</div>
-						<div class="task-card p2" class:swap-phase={state.phaseIndex === 2}>
-							<h4>PARTNER 2</h4>
-							<p>{partnerAssignments.p2}</p>
-						</div>
-					</div>
-				</main>
-				<footer class="timer-controls">
-					<button on:click={resetTimer}>Reset</button>
-					<button class="primary" on:click={state.isRunning ? pauseTimer : startTimer}>
-						{state.isRunning ? 'Pause' : 'Start'}
-					</button>
-				</footer>
-			</div>
+                                        <div class="current-tasks">
+                                                <div class="task-card p1" class:swap-phase={state.phaseIndex === 2}>
+                                                        <h4>PARTNER 1</h4>
+                                                        <p>{partnerAssignments.p1}</p>
+                                                </div>
+                                                <div class="task-card p2" class:swap-phase={state.phaseIndex === 2}>
+                                                        <h4>PARTNER 2</h4>
+                                                        <p>{partnerAssignments.p2}</p>
+                                                </div>
+                                        </div>
+                                        <div class="station-roster-glance">
+                                                <div class="roster-card">
+                                                        <p class="roster-title">Now at Station {state.currentStation + 1}</p>
+                                                        {#if stationRoster[state.currentStation]?.length}
+                                                                <div class="assignment-chips">
+                                                                        {#each stationRoster[state.currentStation] as code, codeIndex (`active-${codeIndex}-${code}`)}
+                                                                                <span class="assignment-chip">{code}</span>
+                                                                        {/each}
+                                                                </div>
+                                                        {:else}
+                                                                <p class="assignment-empty">No staff assigned</p>
+                                                        {/if}
+                                                </div>
+                                                {#if !state.isComplete && totalStations > 0}
+                                                        <div class="roster-card" class:move-phase={state.phaseIndex === 3}>
+                                                                <p class="roster-title">Heading to Station {nextStationIndex + 1}</p>
+                                                                {#if nextStationRoster[nextStationIndex]?.length}
+                                                                        <div class="assignment-chips">
+                                                                                {#each nextStationRoster[nextStationIndex] as code, codeIndex (`upnext-${codeIndex}-${code}`)}
+                                                                                        <span class="assignment-chip">{code}</span>
+                                                                                {/each}
+                                                                        </div>
+                                                                {:else}
+                                                                        <p class="assignment-empty">No rotation assigned</p>
+                                                                {/if}
+                                                        </div>
+                                                {/if}
+                                        </div>
+                                </main>
+                                <footer class="timer-controls">
+                                        <button class="secondary" on:click={openSetup}>Setup</button>
+                                        <button on:click={resetTimer}>Reset</button>
+                                        <button class="primary" on:click={state.isRunning ? pauseTimer : startTimer}>
+                                                {state.isRunning ? 'Pause' : 'Start'}
+                                        </button>
+                                </footer>
+                        </div>
 		</div>
 	{:else}
 		<div class="default-timer-layout">
@@ -397,32 +603,37 @@
 		z-index: 1000;
 		backdrop-filter: blur(4px);
 	}
-	.modal-content {
-		background: linear-gradient(145deg, rgba(8, 12, 10, 0.95), rgba(13, 19, 16, 0.95));
-		border: 1px solid rgba(102, 255, 153, 0.08);
-		border-radius: 20px;
-		padding: 2.5rem;
-		max-width: 560px;
-		width: min(92vw, 560px);
-		text-align: center;
-		box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
-	}
-	.modal-content h2 {
-		color: var(--yellow);
-		margin-bottom: 0.5rem;
-		font-size: 2rem;
-		letter-spacing: 0.08em;
-	}
-	.modal-content p {
-		color: rgba(255, 255, 255, 0.7);
-	}
-	.setup-form {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 1.25rem;
-		margin: 2.5rem 0 2rem;
-		text-align: left;
-	}
+        .modal-content {
+                background: linear-gradient(145deg, rgba(8, 12, 10, 0.95), rgba(13, 19, 16, 0.95));
+                border: 1px solid rgba(102, 255, 153, 0.08);
+                border-radius: 20px;
+                padding: 2.5rem;
+                max-width: 720px;
+                width: min(94vw, 720px);
+                text-align: left;
+                box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
+                display: flex;
+                flex-direction: column;
+                gap: 1.75rem;
+                max-height: min(90vh, 820px);
+                overflow-y: auto;
+        }
+        .modal-content h2 {
+                color: var(--yellow);
+                margin: 0;
+                font-size: 2rem;
+                letter-spacing: 0.08em;
+        }
+        .modal-content p {
+                color: rgba(255, 255, 255, 0.72);
+                margin: 0;
+        }
+        .setup-form {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 1.25rem;
+                margin-top: 1.5rem;
+        }
 	.form-group label {
 		display: block;
 		margin-bottom: 0.5rem;
@@ -449,26 +660,104 @@
 		border-color: var(--yellow);
 		box-shadow: 0 0 0 4px rgba(255, 214, 10, 0.2);
 	}
-	.modal-content button.primary {
-		width: 100%;
-		font-size: 1.25rem;
-		padding: 1rem;
-		border-radius: 10px;
-		border: none;
-		background: linear-gradient(135deg, var(--green), #0c8b63);
-		color: var(--yellow);
-		cursor: pointer;
-		letter-spacing: 0.08em;
-		font-weight: 700;
-		box-shadow: 0 15px 45px rgba(6, 95, 70, 0.45);
-		transition:
-			transform 0.2s ease,
-			box-shadow 0.2s ease;
-	}
-	.modal-content button.primary:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 25px 55px rgba(6, 95, 70, 0.55);
-	}
+        .assignment-setup {
+                display: flex;
+                flex-direction: column;
+                gap: 1rem;
+        }
+        .assignment-setup__header h3 {
+                margin: 0;
+                color: var(--yellow);
+                font-size: 1.25rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+        }
+        .assignment-setup__header p {
+                color: rgba(255, 255, 255, 0.6);
+                font-size: 0.9rem;
+                line-height: 1.5;
+        }
+        .assignment-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 1rem;
+                max-height: clamp(220px, 45vh, 420px);
+                overflow-y: auto;
+                padding-right: 0.5rem;
+        }
+        .assignment-card {
+                background: rgba(14, 20, 17, 0.85);
+                border: 1px solid rgba(102, 255, 153, 0.12);
+                border-radius: 12px;
+                padding: 1rem 1.25rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+                box-shadow: 0 15px 30px rgba(0, 0, 0, 0.35);
+        }
+        .assignment-card label {
+                font-size: 0.85rem;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: rgba(255, 255, 255, 0.65);
+        }
+        .assignment-card input {
+                width: 100%;
+                padding: 0.65rem 0.75rem;
+                border-radius: 8px;
+                border: 1px solid rgba(102, 255, 153, 0.18);
+                background: rgba(9, 13, 11, 0.9);
+                color: white;
+                font-size: 0.95rem;
+                letter-spacing: 0.06em;
+        }
+        .assignment-card input:focus {
+                outline: none;
+                border-color: var(--yellow);
+                box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.2);
+        }
+        .assignment-preview {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.35rem;
+        }
+        .modal-actions {
+                display: flex;
+                gap: 1rem;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+        }
+        .modal-actions button {
+                border-radius: 10px;
+                font-size: 1rem;
+                padding: 0.85rem 1.75rem;
+                cursor: pointer;
+                font-weight: 600;
+                letter-spacing: 0.06em;
+                transition:
+                        transform 0.2s ease,
+                        box-shadow 0.2s ease,
+                        background-color 0.2s ease;
+        }
+        .modal-actions button.primary {
+                border: none;
+                background: linear-gradient(135deg, var(--green), #0c8b63);
+                color: var(--yellow);
+                box-shadow: 0 15px 45px rgba(6, 95, 70, 0.45);
+        }
+        .modal-actions button.primary:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 25px 55px rgba(6, 95, 70, 0.55);
+        }
+        .modal-actions button.secondary {
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                background: rgba(15, 20, 17, 0.85);
+                color: rgba(255, 255, 255, 0.82);
+        }
+        .modal-actions button.secondary:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 18px 35px rgba(0, 0, 0, 0.35);
+        }
 
 	/* --- Partner Circuit Layout Styles --- */
 	.timer-wrapper {
@@ -491,83 +780,245 @@
 		box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 		backdrop-filter: blur(12px);
 	}
-	.left-panel {
-		background: linear-gradient(180deg, rgba(10, 23, 16, 0.95) 0%, rgba(5, 10, 8, 0.95) 100%);
-		padding: 2rem 1.75rem;
-		display: flex;
-		flex-direction: column;
-		border-right: 1px solid rgba(102, 255, 153, 0.08);
-	}
-	.left-panel h2 {
-		color: var(--yellow);
-		margin-bottom: 1.5rem;
-		font-size: 1.5rem;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-	.station-list {
-		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		padding-right: 0.5rem;
-		scroll-behavior: smooth;
-	}
-	.station-item {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		gap: 1rem;
-		align-items: start;
-		background: rgba(20, 30, 25, 0.85);
-		padding: 1rem;
-		border-radius: 14px;
-		border: 1px solid rgba(102, 255, 153, 0.08);
-		transition:
-			transform 0.2s ease,
-			border-color 0.2s ease,
-			box-shadow 0.2s ease;
-	}
-	.station-item.current {
-		border-color: var(--yellow);
-		transform: translateX(6px);
-		box-shadow: 0 12px 35px rgba(255, 214, 10, 0.15);
-		background: rgba(32, 45, 38, 0.95);
-	}
-	.station-number {
-		width: 42px;
-		height: 42px;
-		border-radius: 50%;
-		background: rgba(255, 214, 10, 0.15);
-		color: var(--yellow);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-weight: 700;
-		font-size: 1.1rem;
-		border: 1px solid rgba(255, 214, 10, 0.35);
-	}
-	.station-details h3 {
-		font-size: 1.1rem;
-		margin-bottom: 0.5rem;
-		font-weight: 600;
-	}
-	.station-item p {
-		font-size: 0.9rem;
-		color: rgba(230, 240, 232, 0.8);
-		margin-left: 0.25rem;
-		line-height: 1.4;
-	}
-	.station-item p span {
-		display: inline-block;
-		min-width: 2.25rem;
-		font-weight: 700;
-	}
-	.station-item p.p1 span {
-		color: #7af5c6;
-	}
-	.station-item p.p2 span {
-		color: #fbcfe8;
-	}
+        .left-panel {
+                background: linear-gradient(180deg, rgba(10, 23, 16, 0.95) 0%, rgba(5, 10, 8, 0.95) 100%);
+                padding: 2rem 1.75rem;
+                display: flex;
+                flex-direction: column;
+                border-right: 1px solid rgba(102, 255, 153, 0.08);
+        }
+        .left-panel-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 1rem;
+                margin-bottom: 1.5rem;
+        }
+        .left-panel h2 {
+                color: var(--yellow);
+                margin: 0;
+                font-size: 1.5rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+        }
+        .legend {
+                display: flex;
+                gap: 0.75rem;
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                color: rgba(255, 255, 255, 0.55);
+        }
+        .legend span {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+        }
+        .legend-dot {
+                width: 0.65rem;
+                height: 0.65rem;
+                border-radius: 50%;
+                display: inline-block;
+        }
+        .legend-dot.current {
+                background: var(--yellow);
+                box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.25);
+        }
+        .legend-dot.next {
+                background: rgba(122, 245, 198, 0.85);
+                box-shadow: 0 0 0 3px rgba(122, 245, 198, 0.25);
+        }
+        .station-list {
+                overflow-y: auto;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                gap: 1rem;
+                padding-right: 0.5rem;
+                scroll-behavior: smooth;
+                align-content: start;
+        }
+        .station-item {
+                display: flex;
+                flex-direction: column;
+                gap: 1rem;
+                background: rgba(20, 30, 25, 0.85);
+                padding: 1.1rem 1.25rem;
+                border-radius: 16px;
+                border: 1px solid rgba(102, 255, 153, 0.08);
+                transition:
+                        transform 0.2s ease,
+                        border-color 0.2s ease,
+                        box-shadow 0.2s ease;
+                min-height: 190px;
+        }
+        .station-item.current {
+                border-color: var(--yellow);
+                transform: translateY(-4px);
+                box-shadow: 0 16px 40px rgba(255, 214, 10, 0.18);
+                background: rgba(32, 45, 38, 0.95);
+        }
+        .station-header {
+                display: flex;
+                align-items: center;
+                gap: 0.9rem;
+        }
+        .station-number {
+                width: 42px;
+                height: 42px;
+                border-radius: 50%;
+                background: rgba(255, 214, 10, 0.15);
+                color: var(--yellow);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: 700;
+                font-size: 1.1rem;
+                border: 1px solid rgba(255, 214, 10, 0.35);
+                flex-shrink: 0;
+        }
+        .station-title h3 {
+                margin: 0;
+                font-size: 1.1rem;
+                font-weight: 600;
+        }
+        .station-body {
+                display: flex;
+                flex-direction: column;
+                gap: 0.6rem;
+        }
+        .task-line {
+                display: flex;
+                align-items: flex-start;
+                gap: 0.5rem;
+        }
+        .task-label {
+                width: 32px;
+                height: 32px;
+                border-radius: 999px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.75rem;
+                font-weight: 700;
+                letter-spacing: 0.1em;
+        }
+        .task-label.p1 {
+                background: rgba(122, 245, 198, 0.2);
+                color: #7af5c6;
+                border: 1px solid rgba(122, 245, 198, 0.45);
+        }
+        .task-label.p2 {
+                background: rgba(249, 168, 212, 0.2);
+                color: #fbcfe8;
+                border: 1px solid rgba(249, 168, 212, 0.45);
+        }
+        .task-text {
+                color: rgba(230, 240, 232, 0.86);
+                font-size: 0.95rem;
+                line-height: 1.45;
+        }
+        .station-assignments {
+                display: flex;
+                flex-direction: column;
+                gap: 0.45rem;
+        }
+        .assignment-row {
+                display: flex;
+                align-items: center;
+                gap: 0.65rem;
+        }
+        .assignment-title {
+                font-size: 0.75rem;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                color: rgba(255, 255, 255, 0.55);
+                min-width: 3.5rem;
+        }
+        .assignment-chips {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.35rem;
+        }
+        .assignment-chip {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0.25rem 0.6rem;
+                border-radius: 999px;
+                border: 1px solid rgba(102, 255, 153, 0.35);
+                background: rgba(102, 255, 153, 0.12);
+                color: #eafff3;
+                font-size: 0.75rem;
+                font-weight: 600;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+        }
+        .assignment-empty {
+                font-size: 0.7rem;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                color: rgba(255, 255, 255, 0.4);
+        }
+        .assignment-row.current.active .assignment-title,
+        .assignment-row.current.active .assignment-chip {
+                color: var(--yellow);
+        }
+        .assignment-row.current.active .assignment-chip {
+                background: rgba(255, 214, 10, 0.2);
+                border-color: rgba(255, 214, 10, 0.4);
+                box-shadow: 0 0 20px rgba(255, 214, 10, 0.18);
+        }
+        .assignment-row.next .assignment-chip {
+                border-color: rgba(122, 245, 198, 0.3);
+                background: rgba(122, 245, 198, 0.12);
+                color: rgba(224, 255, 241, 0.9);
+        }
+        .assignment-row.next.move-target .assignment-title,
+        .assignment-row.next.move-target .assignment-chip {
+                color: rgba(122, 245, 198, 0.95);
+        }
+        .assignment-row.next.move-target .assignment-chip {
+                border-color: rgba(122, 245, 198, 0.55);
+                background: rgba(122, 245, 198, 0.24);
+                box-shadow: 0 0 18px rgba(122, 245, 198, 0.25);
+        }
+
+        .station-roster-glance {
+                width: 100%;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 1rem;
+        }
+        .roster-card {
+                background: rgba(15, 24, 19, 0.82);
+                border: 1px solid rgba(102, 255, 153, 0.12);
+                border-radius: 14px;
+                padding: 1.1rem 1.25rem;
+                text-align: left;
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+        }
+        .roster-card.move-phase {
+                border-color: rgba(122, 245, 198, 0.38);
+                box-shadow: 0 16px 45px rgba(122, 245, 198, 0.22);
+        }
+        .roster-title {
+                margin: 0;
+                font-size: 0.85rem;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                color: rgba(255, 255, 255, 0.65);
+        }
+        .roster-card.move-phase .roster-title {
+                color: rgba(122, 245, 198, 0.88);
+        }
+        .roster-card .assignment-chips {
+                gap: 0.45rem;
+        }
+        .roster-card .assignment-empty {
+                margin: 0;
+        }
 
 	.right-panel {
 		display: flex;
@@ -744,15 +1195,20 @@
 			box-shadow 0.2s ease,
 			background-color 0.2s ease;
 	}
-	.timer-controls button:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
-	}
-	.timer-controls button.primary {
-		background: linear-gradient(135deg, var(--green), #0c8b63);
-		color: var(--yellow);
-		border-color: transparent;
-		box-shadow: 0 18px 45px rgba(6, 95, 70, 0.5);
+        .timer-controls button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+        }
+        .timer-controls button.secondary {
+                background: rgba(255, 255, 255, 0.05);
+                border-color: rgba(255, 255, 255, 0.18);
+                color: rgba(255, 255, 255, 0.82);
+        }
+        .timer-controls button.primary {
+                background: linear-gradient(135deg, var(--green), #0c8b63);
+                color: var(--yellow);
+                border-color: transparent;
+                box-shadow: 0 18px 45px rgba(6, 95, 70, 0.5);
 	}
 
 	/* --- Default Layout --- */
@@ -766,21 +1222,27 @@
 		margin-bottom: 1rem;
 	}
 
-	@media (max-width: 1080px) {
-		.partner-circuit-layout {
-			grid-template-columns: 1fr;
-			border-radius: 0;
-		}
-		.left-panel {
-			max-height: 50vh;
-			border-right: none;
-			border-bottom: 1px solid rgba(102, 255, 153, 0.08);
-		}
-		.right-panel {
-			padding: 2rem 1.5rem 2.5rem;
-		}
-		.timer-header {
-			flex-direction: column;
+        @media (max-width: 1080px) {
+                .partner-circuit-layout {
+                        grid-template-columns: 1fr;
+                        border-radius: 0;
+                }
+                .left-panel {
+                        max-height: 50vh;
+                        border-right: none;
+                        border-bottom: 1px solid rgba(102, 255, 153, 0.08);
+                }
+                .station-list {
+                        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                }
+                .station-item {
+                        min-height: 0;
+                }
+                .right-panel {
+                        padding: 2rem 1.5rem 2.5rem;
+                }
+                .timer-header {
+                        flex-direction: column;
 			align-items: flex-start;
 		}
 		.round-info {
@@ -794,27 +1256,34 @@
 		}
 	}
 
-	@media (max-width: 640px) {
-		.modal-content {
-			padding: 2rem 1.5rem;
-		}
-		.setup-form {
-			grid-template-columns: 1fr;
-		}
-		.time-display {
-			font-size: clamp(4.5rem, 20vw, 8rem);
-		}
-		.partner-circuit-layout {
-			box-shadow: none;
-		}
-		.left-panel {
-			padding: 1.5rem;
-		}
-		.right-panel {
-			padding: 1.75rem;
-		}
-		.timer-controls button {
-			width: 100%;
+        @media (max-width: 640px) {
+                .modal-content {
+                        padding: 2rem 1.5rem;
+                }
+                .setup-form {
+                        grid-template-columns: 1fr;
+                }
+                .assignment-grid {
+                        grid-template-columns: 1fr;
+                        max-height: 280px;
+                }
+                .time-display {
+                        font-size: clamp(4.5rem, 20vw, 8rem);
+                }
+                .partner-circuit-layout {
+                        box-shadow: none;
+                }
+                .left-panel {
+                        padding: 1.5rem;
+                }
+                .station-list {
+                        grid-template-columns: 1fr;
+                }
+                .right-panel {
+                        padding: 1.75rem;
+                }
+                .timer-controls button {
+                        width: 100%;
 		}
 	}
 </style>
