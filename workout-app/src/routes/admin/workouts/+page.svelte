@@ -1,6 +1,6 @@
 <script>
-        // @ts-nocheck
-        import { onMount } from 'svelte';
+	// @ts-nocheck
+	import { onMount } from 'svelte';
 	import { db, auth } from '$lib/firebase';
 	import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
 	import { goto } from '$app/navigation';
