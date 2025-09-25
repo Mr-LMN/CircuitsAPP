@@ -1,4 +1,5 @@
 <script>
+        import '../app.css';
         import { onMount } from 'svelte';
         import { goto } from '$app/navigation';
         import { resolve } from '$app/paths';
@@ -8,7 +9,6 @@
         import { doc, getDoc } from 'firebase/firestore';
         import { auth, db } from '$lib/firebase';
         import { user, loading } from '$lib/store';
-        import '../app.css';
 
         let profileExists = false;
         let checkingProfile = false;
