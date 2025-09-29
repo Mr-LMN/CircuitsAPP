@@ -14,38 +14,56 @@
 	let notes = '';
 
 	// This will now hold different shaped objects based on the 'mode'
-	let exercises = [{ name: '', description: '' }];
+        let exercises = [{ name: '', description: '' }];
+        let structureMode = mode;
 
-	// UI state
-	let isSubmitting = false;
-	let successMessage = '';
-	let errorMessage = '';
-	let allExerciseNames = [];
+        function convertToPartner(list) {
+                return list.map((exercise, index) => ({
+                        name: exercise.name || `Station ${index + 1}`,
+                        p1_task: exercise.p1_task ?? exercise.description ?? '',
+                        p2_task: exercise.p2_task ?? ''
+                }));
+        }
 
-	// This reactive statement automatically resets the exercises when the mode changes
-	$: {
-		if (mode === 'Partner') {
-			exercises = [{ name: 'Station 1', p1_task: '', p2_task: '' }];
-		} else {
-			exercises = [{ name: '', description: '' }];
-		}
-	}
+        function convertToIndividual(list) {
+                return list.map((exercise) => ({
+                        name: exercise.name ?? '',
+                        description:
+                                exercise.description ??
+                                [exercise.p1_task, exercise.p2_task].filter(Boolean).join(' / ')
+                }));
+        }
+
+        // UI state
+        let isSubmitting = false;
+        let successMessage = '';
+        let errorMessage = '';
+        let allExerciseNames = [];
+
+        // Keep exercise data aligned with the currently selected mode
+        $: if (mode !== structureMode) {
+                exercises = mode === 'Partner' ? convertToPartner(exercises) : convertToIndividual(exercises);
+                structureMode = mode;
+        }
 
 	onMount(async () => {
 		const querySnapshot = await getDocs(collection(db, 'exercises'));
 		allExerciseNames = querySnapshot.docs.map((doc) => doc.data().name);
 	});
 
-	function addExercise() {
-		if (mode === 'Partner') {
-			exercises = [
-				...exercises,
-				{ name: `Station ${exercises.length + 1}`, p1_task: '', p2_task: '' }
-			];
-		} else {
-			exercises = [...exercises, { name: '', description: '' }];
-		}
-	}
+        function addExercise() {
+                exercises =
+                        mode === 'Partner'
+                                ? [
+                                          ...exercises,
+                                          {
+                                                  name: `Station ${exercises.length + 1}`,
+                                                  p1_task: '',
+                                                  p2_task: ''
+                                          }
+                                  ]
+                                : [...exercises, { name: '', description: '' }];
+        }
 
 	function removeExercise(index) {
 		exercises = exercises.filter((_, i) => i !== index);
@@ -67,20 +85,20 @@
 		errorMessage = '';
 		successMessage = '';
 		try {
-			const workoutData = {
-				title,
-				type,
-				mode,
-				isBenchmark,
-				notes,
+                        const workoutData = {
+                                title,
+                                type,
+                                mode,
+                                isBenchmark,
+                                notes,
 				exercises,
 				creatorId: auth.currentUser.uid,
 				createdAt: serverTimestamp()
 			};
 			await addDoc(collection(db, 'workouts'), workoutData);
 
-			for (const exercise of exercises) {
-				// We can save both individual exercises and P1/P2 tasks to autocomplete
+                        for (const exercise of exercises) {
+                                // Store individual names or Partner A/B tasks for future suggestions
 				const namesToSave =
 					mode === 'Partner' ? [exercise.p1_task, exercise.p2_task] : [exercise.name];
 				for (const name of namesToSave) {
@@ -140,46 +158,65 @@
 			<label for="benchmark">Make this a Benchmark Workout</label>
 		</div>
 
-		<fieldset>
-			<legend>Exercises</legend>
-			<datalist id="exercise-suggestions">
-				{#each allExerciseNames as name (name)}
-					<option value={name}></option>
-				{/each}
-			</datalist>
+                <fieldset>
+                        <legend>
+                                Exercises
+                                {#if mode === 'Partner'}
+                                        <span class="fieldset-note">Partners alternate between A &amp; B tasks.</span>
+                                {/if}
+                        </legend>
+                        {#if mode === 'Partner'}
+                                <p class="partner-helper">
+                                        Assign a task for Partner A and Partner B. The timer automatically adds a swap
+                                        window so they can trade positions each round.
+                                </p>
+                        {/if}
+                        <datalist id="exercise-suggestions">
+                                {#each allExerciseNames as name (name)}
+                                        <option value={name}></option>
+                                {/each}
+                        </datalist>
 
-			{#if mode === 'Partner'}
-				{#each exercises as exercise, i (i)}
-					<div class="exercise-item partner">
-						<input
-							class="station-name"
-							type="text"
-							bind:value={exercise.name}
-							placeholder="Station #{i + 1} Name"
-							required
-						/>
-						<div class="partner-tasks">
-							<input
-								type="text"
-								bind:value={exercise.p1_task}
-								placeholder="P1 Task (e.g., Treadmill)"
-								required
-								list="exercise-suggestions"
-							/>
-							<input
-								type="text"
-								bind:value={exercise.p2_task}
-								placeholder="P2 Task (e.g., Plank)"
-								required
-								list="exercise-suggestions"
-							/>
-						</div>
-						<button type="button" class="remove-btn" on:click={() => removeExercise(i)}
-							>&times;</button
-						>
-					</div>
-				{/each}
-			{:else}
+                        {#if mode === 'Partner'}
+                                {#each exercises as exercise, i (i)}
+                                        <div class="exercise-item partner">
+                                                <input
+                                                        class="station-name"
+                                                        type="text"
+                                                        bind:value={exercise.name}
+                                                        placeholder="Station #{i + 1} Name"
+                                                        required
+                                                />
+                                                <div class="partner-tasks">
+                                                        <label class="task-label" for={`partner-a-${i}`}>
+                                                                Partner A Task
+                                                        </label>
+                                                        <input
+                                                                id={`partner-a-${i}`}
+                                                                type="text"
+                                                                bind:value={exercise.p1_task}
+                                                                placeholder="e.g., Treadmill Run"
+                                                                required
+                                                                list="exercise-suggestions"
+                                                        />
+                                                        <label class="task-label" for={`partner-b-${i}`}>
+                                                                Partner B Task
+                                                        </label>
+                                                        <input
+                                                                id={`partner-b-${i}`}
+                                                                type="text"
+                                                                bind:value={exercise.p2_task}
+                                                                placeholder="e.g., Plank Hold"
+                                                                required
+                                                                list="exercise-suggestions"
+                                                        />
+                                                </div>
+                                                <button type="button" class="remove-btn" on:click={() => removeExercise(i)}
+                                                        >&times;</button
+                                                >
+                                        </div>
+                                {/each}
+                        {:else}
 				{#each exercises as exercise, i (i)}
 					<div class="exercise-item">
 						<input
@@ -329,25 +366,46 @@
 	}
 
 	/* NEW styles for Partner form */
-	.exercise-item.partner {
-		flex-direction: column;
-		align-items: stretch;
-		background: rgba(0, 0, 0, 0.2);
-		padding: 1rem;
-		border-radius: 8px;
-		position: relative;
-	}
-	.exercise-item.partner .remove-btn {
-		position: absolute;
-		top: 0.5rem;
-		right: 0.5rem;
-	}
-	.station-name {
-		font-weight: bold;
-		margin-bottom: 0.75rem;
-	}
-	.partner-tasks {
-		display: flex;
-		gap: 0.5rem;
-	}
+        .fieldset-note {
+                display: inline-block;
+                margin-left: 0.75rem;
+                font-size: 0.8rem;
+                color: var(--text-muted);
+        }
+        .exercise-item.partner {
+                flex-direction: column;
+                align-items: stretch;
+                background: rgba(0, 0, 0, 0.2);
+                padding: 1rem;
+                border-radius: 8px;
+                position: relative;
+        }
+        .exercise-item.partner .remove-btn {
+                position: absolute;
+                top: 0.5rem;
+                right: 0.5rem;
+        }
+        .station-name {
+                font-weight: bold;
+                margin-bottom: 0.75rem;
+        }
+        .partner-tasks {
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
+        }
+        .partner-tasks .task-label {
+                font-size: 0.75rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: var(--text-muted);
+        }
+        .partner-tasks input {
+                width: 100%;
+        }
+        .partner-helper {
+                margin: 0.5rem 0 1rem;
+                font-size: 0.9rem;
+                color: var(--text-muted);
+        }
 </style>

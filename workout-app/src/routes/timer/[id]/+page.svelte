@@ -106,13 +106,45 @@
 		});
 		return roster;
 	});
-	$: progress =
-		state.duration > 0
-			? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100))
-			: 0;
-	$: if (workout.type === 'AMRAP') {
-		amrapMinutes = sessionConfig.totalTime / 60;
-	}
+        $: progress =
+                state.duration > 0
+                        ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100))
+                        : 0;
+        $: if (workout.type === 'AMRAP') {
+                amrapMinutes = sessionConfig.totalTime / 60;
+        }
+        $: activeStation = workout.exercises?.[state.currentStation] ?? null;
+        $: partnerCallout =
+                workout.mode === 'Partner'
+                        ? (() => {
+                                  if (!activeStation) return null;
+                                  if (state.phase === 'PARTNER A') {
+                                          return {
+                                                  title: 'Partner A Work',
+                                                  task: activeStation.p1_task || activeStation.name
+                                          };
+                                  }
+                                  if (state.phase === 'PARTNER B') {
+                                          return {
+                                                  title: 'Partner B Work',
+                                                  task: activeStation.p2_task || activeStation.name
+                                          };
+                                  }
+                                  if (state.phase === 'SWAP') {
+                                          return {
+                                                  title: 'Swap & Transition',
+                                                  task: 'Trade positions and reset equipment.'
+                                          };
+                                  }
+                                  if (state.phase === 'MOVE') {
+                                          return {
+                                                  title: 'Move Stations',
+                                                  task: 'Rotate to the next station together.'
+                                          };
+                                  }
+                                  return null;
+                          })()
+                        : null;
 
 	function handleAmrapInput(event) {
 		const value = Number(event.target.value);
@@ -130,24 +162,24 @@
 			const nextPhaseIndex = state.phaseIndex + 1;
 			if (workout.mode === 'Partner') {
 				// Partner Circuit
-				if (nextPhaseIndex === 0) {
-					state.phaseIndex = 0;
-					state.phase = 'WORK 1';
-					state.remaining = state.duration = sessionConfig.work;
-					whistleBell();
-				} else if (nextPhaseIndex === 1) {
-					state.phaseIndex = 1;
-					state.phase = 'SWAP';
-					state.remaining = state.duration = sessionConfig.swap;
-					tone(420, 160);
-				} else if (nextPhaseIndex === 2) {
-					state.phaseIndex = 2;
-					state.phase = 'WORK 2';
-					state.remaining = state.duration = sessionConfig.work;
-					whistleBell();
-				} else if (nextPhaseIndex === 3) {
-					state.phaseIndex = 3;
-					state.phase = 'MOVE';
+                                if (nextPhaseIndex === 0) {
+                                        state.phaseIndex = 0;
+                                        state.phase = 'PARTNER A';
+                                        state.remaining = state.duration = sessionConfig.work;
+                                        whistleBell();
+                                } else if (nextPhaseIndex === 1) {
+                                        state.phaseIndex = 1;
+                                        state.phase = 'SWAP';
+                                        state.remaining = state.duration = sessionConfig.swap;
+                                        tone(420, 160);
+                                } else if (nextPhaseIndex === 2) {
+                                        state.phaseIndex = 2;
+                                        state.phase = 'PARTNER B';
+                                        state.remaining = state.duration = sessionConfig.work;
+                                        whistleBell();
+                                } else if (nextPhaseIndex === 3) {
+                                        state.phaseIndex = 3;
+                                        state.phase = 'MOVE';
 					state.remaining = state.duration = sessionConfig.move;
 					tone(420, 160);
 				} else {
@@ -161,10 +193,10 @@
 						}
 					}
 					state.phaseIndex = 0;
-					state.phase = 'WORK 1';
-					state.remaining = state.duration = sessionConfig.work;
-					whistleBell();
-				}
+                                        state.phase = 'PARTNER A';
+                                        state.remaining = state.duration = sessionConfig.work;
+                                        whistleBell();
+                                }
 			} else {
 				// Individual Circuit
 				// Simplified Work -> Move logic
@@ -292,26 +324,27 @@
 			<h2>Session Setup</h2>
 			<div class="setup-form">
 				{#if workout.type === 'Circuit' || workout.type === 'Timed Rounds'}
-					<div class="form-group">
-						<label for="work">Work (s)</label><input
-							id="work"
-							type="number"
-							min="0"
-							bind:value={sessionConfig.work}
-						/>
-					</div>
-					{#if workout.mode === 'Partner'}
-						<div class="form-group">
-							<label for="swap">Swap (s)</label><input
-								id="swap"
-								type="number"
-								min="0"
-								bind:value={sessionConfig.swap}
-							/>
-						</div>
-					{/if}
-					<div class="form-group">
-						<label for="move">Move/Rest (s)</label><input
+                                        <div class="form-group">
+                                                <label for="work">Work per Partner (s)</label><input
+                                                        id="work"
+                                                        type="number"
+                                                        min="0"
+                                                        bind:value={sessionConfig.work}
+                                                />
+                                        </div>
+                                        {#if workout.mode === 'Partner'}
+                                                <div class="form-group">
+                                                        <label for="swap">Swap / Transition (s)</label><input
+                                                                id="swap"
+                                                                type="number"
+                                                                min="0"
+                                                                bind:value={sessionConfig.swap}
+                                                        />
+                                                        <p class="input-hint">Time for partners to trade stations.</p>
+                                                </div>
+                                        {/if}
+                                        <div class="form-group">
+                                                <label for="move">Move/Rest (s)</label><input
 							id="move"
 							type="number"
 							min="0"
@@ -397,18 +430,18 @@
 									<span class="station-number">{i + 1}</span>
 									<h3>{station.name}</h3>
 								</header>
-								<div class="station-card__tasks">
-									<div class="task-line">
-										<span class="task-label p1">P1</span><span class="task-text"
-											>{station.p1_task || station.name}</span
-										>
-									</div>
-									{#if station.p2_task}<div class="task-line">
-											<span class="task-label p2">P2</span><span class="task-text"
-												>{station.p2_task}</span
-											>
-										</div>{/if}
-								</div>
+                                                                <div class="station-card__tasks">
+                                                                        <div class="task-line">
+                                                                                <span class="task-badge partner-a">Partner A</span>
+                                                                                <span class="task-text">{station.p1_task || station.name}</span>
+                                                                        </div>
+                                                                        {#if station.p2_task}
+                                                                                <div class="task-line">
+                                                                                        <span class="task-badge partner-b">Partner B</span>
+                                                                                        <span class="task-text">{station.p2_task}</span>
+                                                                                </div>
+                                                                        {/if}
+                                                                </div>
 								{#if workout.mode === 'Partner'}
 									<footer class="station-card__roster">
 										<div class="roster-chips">
@@ -422,18 +455,24 @@
 						{/each}
 					</div>
 				</div>
-				<div class="right-panel">
-					<main class="timer-main">
-						<div class="phase-display">{state.phase}</div>
-						<div class="time-display">{formatTime(state.remaining)}</div>
-						<div class="progress-bar-container">
-							<div class="progress-bar-fill" style="width: {progress}%"></div>
-						</div>
-					</main>
-					<footer class="timer-footer">
-						<div class="meta-info">
-							<span
-								>Station {Math.min(state.currentStation + 1, totalStations)}/{totalStations}</span
+                                <div class="right-panel">
+                                        <main class="timer-main">
+                                                <div class="phase-display">{state.phase}</div>
+                                                <div class="time-display">{formatTime(state.remaining)}</div>
+                                                <div class="progress-bar-container">
+                                                        <div class="progress-bar-fill" style="width: {progress}%"></div>
+                                                </div>
+                                                {#if partnerCallout}
+                                                        <div class="partner-callout">
+                                                                <span class="callout-title">{partnerCallout.title}</span>
+                                                                <span class="callout-task">{partnerCallout.task}</span>
+                                                        </div>
+                                                {/if}
+                                        </main>
+                                        <footer class="timer-footer">
+                                                <div class="meta-info">
+                                                        <span
+                                                                >Station {Math.min(state.currentStation + 1, totalStations)}/{totalStations}</span
 							>
 							<span
 								>Round {Math.min(
@@ -494,18 +533,20 @@
 </div>
 
 <style>
-	:root {
-		--font-body: 'Inter', sans-serif;
-		--font-display: 'Bebas Neue', sans-serif;
-		--brand-yellow: #fde047;
-		--brand-green: #16a34a;
-		--bg-main: #111827;
-		--bg-panel: #1f2937;
-		--border-color: #374151;
-		--text-primary: #f9fafb;
-		--text-secondary: #9ca3af;
-		--text-muted: #6b7280;
-	}
+        :root {
+                --font-body: 'Inter', sans-serif;
+                --font-display: 'Bebas Neue', sans-serif;
+                --brand-yellow: #fde047;
+                --brand-green: #16a34a;
+                --bg-main: #111827;
+                --bg-panel: #1f2937;
+                --border-color: #374151;
+                --surface-2: #1f2937;
+                --surface-3: #374151;
+                --text-primary: #f9fafb;
+                --text-secondary: #9ca3af;
+                --text-muted: #6b7280;
+        }
 	:global(body) {
 		background-color: var(--bg-main);
 		color: var(--text-primary);
@@ -537,32 +578,36 @@
 		gap: 1.5rem;
 		max-height: 90vh;
 	}
-	.modal-content h2,
-	.assignment-setup__header h3 {
-		font-family: var(--font-display);
-		color: var(--brand-yellow);
-		letter-spacing: 0.08em;
-	}
+        .modal-content h2 {
+                font-family: var(--font-display);
+                color: var(--brand-yellow);
+                letter-spacing: 0.08em;
+        }
 	.setup-form {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 		gap: 1rem;
 	}
-	.form-group label {
-		display: block;
-		margin-bottom: 0.25rem;
-		color: var(--text-muted);
-		font-size: 0.75rem;
-	}
-	.form-group input {
-		width: 100%;
-		font-size: 1rem;
-		padding: 0.5rem;
-		border-radius: 6px;
-		border: 1px solid var(--border-color);
-		background: var(--bg-main);
-		color: var(--text-primary);
-	}
+        .form-group label {
+                display: block;
+                margin-bottom: 0.25rem;
+                color: var(--text-muted);
+                font-size: 0.75rem;
+        }
+        .form-group input {
+                width: 100%;
+                font-size: 1rem;
+                padding: 0.5rem;
+                border-radius: 6px;
+                border: 1px solid var(--border-color);
+                background: var(--bg-main);
+                color: var(--text-primary);
+        }
+        .form-group .input-hint {
+                margin-top: 0.35rem;
+                font-size: 0.75rem;
+                color: var(--text-muted);
+        }
 	.assignment-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -648,15 +693,48 @@
 		grid-template-columns: 1fr 1fr;
 		gap: 1rem;
 	}
-	.station-card {
-		background: var(--bg-main);
-		border: 1px solid var(--border-color);
-		border-radius: 12px;
-		padding: 1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
+        .station-card {
+                background: var(--bg-main);
+                border: 1px solid var(--border-color);
+                border-radius: 12px;
+                padding: 1rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+        }
+        .station-card__tasks {
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+        }
+        .task-line {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+        }
+        .task-badge {
+                font-size: 0.7rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                padding: 0.25rem 0.5rem;
+                border-radius: 999px;
+                background: var(--surface-2);
+                color: var(--text-secondary);
+                font-weight: 700;
+        }
+        .task-badge.partner-a {
+                background: rgba(253, 224, 71, 0.15);
+                color: var(--brand-yellow);
+        }
+        .task-badge.partner-b {
+                background: rgba(34, 197, 94, 0.15);
+                color: var(--brand-green);
+        }
+        .task-text {
+                font-size: 0.95rem;
+                color: var(--text-primary);
+                flex: 1;
+        }
 	.station-card.current {
 		border-color: var(--brand-yellow);
 	}
@@ -692,33 +770,55 @@
 		text-align: center;
 		padding: 2rem;
 	}
-	.timer-main {
-		flex-grow: 1;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		align-items: center;
-	}
-	.phase-display {
-		font-family: var(--font-display);
-		font-size: clamp(3rem, 10vw, 6rem);
-	}
-	.time-display {
-		font-family: var(--font-display);
-		font-size: clamp(10rem, 30vh, 20rem);
-		line-height: 1;
-	}
-	.progress-bar-container {
-		width: 100%;
-		max-width: 700px;
-		height: 6px;
-		background: var(--bg-main);
-		border-radius: 999px;
-	}
-	.progress-bar-fill {
-		height: 100%;
-		background: var(--brand-yellow);
-	}
+        .timer-main {
+                flex-grow: 1;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+        }
+        .phase-display {
+                font-family: var(--font-display);
+                font-size: clamp(3rem, 10vw, 6rem);
+        }
+        .time-display {
+                font-family: var(--font-display);
+                font-size: clamp(10rem, 30vh, 20rem);
+                line-height: 1;
+        }
+        .progress-bar-container {
+                width: 100%;
+                max-width: 700px;
+                height: 6px;
+                background: var(--bg-main);
+                border-radius: 999px;
+        }
+        .progress-bar-fill {
+                height: 100%;
+                background: var(--brand-yellow);
+        }
+        .partner-callout {
+                margin-top: 1.5rem;
+                padding: 1rem 1.25rem;
+                border-radius: 12px;
+                background: rgba(15, 23, 42, 0.65);
+                border: 1px solid rgba(253, 224, 71, 0.25);
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
+                max-width: 480px;
+        }
+        .partner-callout .callout-title {
+                font-size: 0.95rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: var(--brand-yellow);
+        }
+        .partner-callout .callout-task {
+                font-size: 1.25rem;
+                font-weight: 600;
+                color: var(--text-primary);
+        }
 	.timer-footer {
 		width: 100%;
 		margin-top: auto;
