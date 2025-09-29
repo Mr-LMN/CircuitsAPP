@@ -17,7 +17,25 @@
 	let isBenchmark = data.workout.isBenchmark;
 	let notes = data.workout.notes;
 	// We deep-copy the exercises array to avoid weird reactivity issues.
-	let exercises = JSON.parse(JSON.stringify(data.workout.exercises));
+        let exercises = JSON.parse(JSON.stringify(data.workout.exercises));
+        let structureMode = mode;
+
+        function convertToPartner(list) {
+                return list.map((exercise, index) => ({
+                        name: exercise.name || `Station ${index + 1}`,
+                        p1_task: exercise.p1_task ?? exercise.description ?? '',
+                        p2_task: exercise.p2_task ?? ''
+                }));
+        }
+
+        function convertToIndividual(list) {
+                return list.map((exercise) => ({
+                        name: exercise.name ?? '',
+                        description:
+                                exercise.description ??
+                                [exercise.p1_task, exercise.p2_task].filter(Boolean).join(' / ')
+                }));
+        }
 
 	let isSubmitting = false;
 	let successMessage = '';
@@ -29,20 +47,40 @@
 		allExerciseNames = querySnapshot.docs.map((doc) => doc.data().name);
 	});
 
-	function addExercise() {
-		exercises = [...exercises, { name: '', description: '' }];
-	}
+        $: if (mode !== structureMode) {
+                exercises = mode === 'Partner' ? convertToPartner(exercises) : convertToIndividual(exercises);
+                structureMode = mode;
+        }
+
+        function addExercise() {
+                exercises =
+                        mode === 'Partner'
+                                ? [
+                                          ...exercises,
+                                          {
+                                                  name: `Station ${exercises.length + 1}`,
+                                                  p1_task: '',
+                                                  p2_task: ''
+                                          }
+                                  ]
+                                : [...exercises, { name: '', description: '' }];
+        }
 
 	function removeExercise(index) {
 		exercises = exercises.filter((_, i) => i !== index);
 	}
 
 	// The main difference is this function now UPDATES an existing document.
-	async function updateWorkout() {
-		if (!title || exercises.some((ex) => !ex.name)) {
-			errorMessage = 'Workout title and all exercise names are required.';
-			return;
-		}
+        async function updateWorkout() {
+                const isInvalid =
+                        mode === 'Partner'
+                                ? exercises.some((ex) => !ex.name || !ex.p1_task || !ex.p2_task)
+                                : exercises.some((ex) => !ex.name);
+
+                if (!title || isInvalid) {
+                        errorMessage = 'Workout title and all required exercise/task fields are required.';
+                        return;
+                }
 
 		isSubmitting = true;
 		errorMessage = '';
@@ -66,13 +104,17 @@
 			await updateDoc(workoutRef, updatedData);
 
 			// 4. Save any new unique exercises for the autocomplete feature
-			for (const exercise of exercises) {
-				const exerciseName = exercise.name.trim();
-				if (exerciseName) {
-					const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
-					await setDoc(exerciseRef, { name: exerciseName });
-				}
-			}
+                        for (const exercise of exercises) {
+                                const namesToSave =
+                                        mode === 'Partner' ? [exercise.p1_task, exercise.p2_task] : [exercise.name];
+                                for (const name of namesToSave) {
+                                        const exerciseName = name?.trim?.() ?? '';
+                                        if (exerciseName) {
+                                                const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
+                                                await setDoc(exerciseRef, { name: exerciseName });
+                                        }
+                                }
+                        }
 
 			successMessage = 'Workout updated successfully!';
 			setTimeout(() => goto(resolve('/admin/workouts')), 1500);
@@ -118,35 +160,87 @@
 			<label for="benchmark">Make this a Benchmark Workout</label>
 		</div>
 
-		<fieldset>
-			<legend>Exercises</legend>
-			<datalist id="exercise-suggestions">
-				{#each allExerciseNames as name (name)}
-					<option value={name}></option>
-				{/each}
-			</datalist>
+                <fieldset>
+                        <legend>
+                                Exercises
+                                {#if mode === 'Partner'}
+                                        <span class="fieldset-note">Partners alternate between A &amp; B tasks.</span>
+                                {/if}
+                        </legend>
+                        {#if mode === 'Partner'}
+                                <p class="partner-helper">
+                                        Assign the Partner A and Partner B duties for each station. The timer will include
+                                        a swap window so athletes can trade tasks between rounds.
+                                </p>
+                        {/if}
+                        <datalist id="exercise-suggestions">
+                                {#each allExerciseNames as name (name)}
+                                        <option value={name}></option>
+                                {/each}
+                        </datalist>
 
-			{#each exercises as exercise, i (i)}
-				<div class="exercise-item">
-					<input
-						type="text"
-						bind:value={exercise.name}
-						placeholder="Exercise #{i + 1} Name"
-						required
-						list="exercise-suggestions"
-					/>
-					<input
-						type="text"
-						bind:value={exercise.description}
-						placeholder="Description (e.g., 12 reps, 45s)"
-					/>
-					<button type="button" class="remove-btn" on:click={() => removeExercise(i)}
-						>&times;</button
-					>
-				</div>
-			{/each}
-			<button type="button" class="secondary-btn" on:click={addExercise}>+ Add Exercise</button>
-		</fieldset>
+                        {#if mode === 'Partner'}
+                                {#each exercises as exercise, i (i)}
+                                        <div class="exercise-item partner">
+                                                <input
+                                                        class="station-name"
+                                                        type="text"
+                                                        bind:value={exercise.name}
+                                                        placeholder="Station #{i + 1} Name"
+                                                        required
+                                                />
+                                                <div class="partner-tasks">
+                                                        <label class="task-label" for={`partner-a-${i}`}>
+                                                                Partner A Task
+                                                        </label>
+                                                        <input
+                                                                id={`partner-a-${i}`}
+                                                                type="text"
+                                                                bind:value={exercise.p1_task}
+                                                                placeholder="e.g., Treadmill Run"
+                                                                required
+                                                                list="exercise-suggestions"
+                                                        />
+                                                        <label class="task-label" for={`partner-b-${i}`}>
+                                                                Partner B Task
+                                                        </label>
+                                                        <input
+                                                                id={`partner-b-${i}`}
+                                                                type="text"
+                                                                bind:value={exercise.p2_task}
+                                                                placeholder="e.g., Plank Hold"
+                                                                required
+                                                                list="exercise-suggestions"
+                                                        />
+                                                </div>
+                                                <button type="button" class="remove-btn" on:click={() => removeExercise(i)}
+                                                        >&times;</button
+                                                >
+                                        </div>
+                                {/each}
+                        {:else}
+                                {#each exercises as exercise, i (i)}
+                                        <div class="exercise-item">
+                                                <input
+                                                        type="text"
+                                                        bind:value={exercise.name}
+                                                        placeholder="Exercise #{i + 1} Name"
+                                                        required
+                                                        list="exercise-suggestions"
+                                                />
+                                                <input
+                                                        type="text"
+                                                        bind:value={exercise.description}
+                                                        placeholder="Description (e.g., 12 reps, 45s)"
+                                                />
+                                                <button type="button" class="remove-btn" on:click={() => removeExercise(i)}
+                                                        >&times;</button
+                                                >
+                                        </div>
+                                {/each}
+                        {/if}
+                        <button type="button" class="secondary-btn" on:click={addExercise}>+ Add Exercise</button>
+                </fieldset>
 
 		{#if successMessage}
 			<p class="success-message">{successMessage}</p>
@@ -262,15 +356,57 @@
 		height: 1.25em;
 	}
 	/* Assuming other styles like .primary-btn are in app.css */
-	.secondary-btn {
-		border: 1px solid var(--border-color);
-		background: none;
-		color: var(--text-muted);
-		padding: 0.5rem 1rem;
-		border-radius: 8px;
-		cursor: pointer;
-		display: block;
-		width: 100%;
-		margin-top: 0.5rem;
-	}
+        .secondary-btn {
+                border: 1px solid var(--border-color);
+                background: none;
+                color: var(--text-muted);
+                padding: 0.5rem 1rem;
+                border-radius: 8px;
+                cursor: pointer;
+                display: block;
+                width: 100%;
+                margin-top: 0.5rem;
+        }
+        .fieldset-note {
+                display: inline-block;
+                margin-left: 0.75rem;
+                font-size: 0.8rem;
+                color: var(--text-muted);
+        }
+        .partner-helper {
+                margin: 0.5rem 0 1rem;
+                font-size: 0.9rem;
+                color: var(--text-muted);
+        }
+        .exercise-item.partner {
+                flex-direction: column;
+                align-items: stretch;
+                background: rgba(0, 0, 0, 0.2);
+                padding: 1rem;
+                border-radius: 8px;
+                position: relative;
+        }
+        .exercise-item.partner .remove-btn {
+                position: absolute;
+                top: 0.5rem;
+                right: 0.5rem;
+        }
+        .exercise-item.partner .station-name {
+                font-weight: bold;
+                margin-bottom: 0.75rem;
+        }
+        .partner-tasks {
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
+        }
+        .partner-tasks .task-label {
+                font-size: 0.75rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: var(--text-muted);
+        }
+        .partner-tasks input {
+                width: 100%;
+        }
 </style>

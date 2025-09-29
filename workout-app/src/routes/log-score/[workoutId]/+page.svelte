@@ -89,13 +89,23 @@
 
 		<form class="score-form" on:submit|preventDefault={saveScores}>
 			<div class="station-list">
-				{#each exercises as station, index (station.id ?? index)}
+                                {#each exercises as station, index (station?.name ?? index)}
 					<div class="station-row">
 						<div class="station-details">
 							<span class="station-index">{index + 1}</span>
 							<div class="station-text">
 								<h3>{station.name}</h3>
-								<p class="tasks">P1: {station.p1_task} • P2: {station.p2_task}</p>
+                                                                <p class="tasks">
+                                                                        {#if station.p1_task}
+                                                                                <span>Partner A: {station.p1_task}</span>
+                                                                        {/if}
+                                                                        {#if station.p1_task && station.p2_task}
+                                                                                <span class="divider">•</span>
+                                                                        {/if}
+                                                                        {#if station.p2_task}
+                                                                                <span>Partner B: {station.p2_task}</span>
+                                                                        {/if}
+                                                                </p>
 							</div>
 						</div>
 						<input
@@ -202,11 +212,19 @@
 		font-size: 1.2rem;
 	}
 
-	.tasks {
-		margin: 0.35rem 0 0;
-		color: var(--text-muted, #94a3b8);
-		font-size: 0.9rem;
-	}
+        .tasks {
+                margin: 0.35rem 0 0;
+                color: var(--text-muted, #94a3b8);
+                font-size: 0.9rem;
+        }
+        .tasks span {
+                display: inline-flex;
+                gap: 0.25rem;
+                align-items: center;
+        }
+        .tasks .divider {
+                margin: 0 0.4rem;
+        }
 
 	.score-input {
 		min-width: 220px;
