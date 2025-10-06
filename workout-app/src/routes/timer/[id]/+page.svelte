@@ -146,6 +146,50 @@
                           })()
                         : null;
 
+        function getStationStarter(station) {
+                return station?.startsWith?.toString?.().toUpperCase() === 'P2' ? 'P2' : 'P1';
+        }
+
+        function getPartnerSequence(stationIndex) {
+                const station = workout.exercises?.[stationIndex];
+                if (!station) {
+                        return ['PARTNER A', 'SWAP', 'PARTNER B', 'MOVE'];
+                }
+                return getStationStarter(station) === 'P2'
+                        ? ['PARTNER B', 'SWAP', 'PARTNER A', 'MOVE']
+                        : ['PARTNER A', 'SWAP', 'PARTNER B', 'MOVE'];
+        }
+
+        function getPhaseDuration(phase) {
+                switch (phase) {
+                        case 'PARTNER A':
+                        case 'PARTNER B':
+                        case 'WORK':
+                                return sessionConfig.work;
+                        case 'SWAP':
+                                return sessionConfig.swap;
+                        case 'MOVE':
+                                return sessionConfig.move;
+                        default:
+                                return sessionConfig.work;
+                }
+        }
+
+        function playCueForPhase(phase) {
+                if (phase === 'PARTNER A' || phase === 'PARTNER B' || phase === 'WORK') {
+                        whistleBell();
+                } else if (phase === 'SWAP' || phase === 'MOVE') {
+                        tone(420, 160);
+                }
+        }
+
+        function applyPhase(phase, phaseIndex) {
+                state.phaseIndex = phaseIndex;
+                state.phase = phase;
+                state.remaining = state.duration = getPhaseDuration(phase);
+                playCueForPhase(phase);
+        }
+
 	function handleAmrapInput(event) {
 		const value = Number(event.target.value);
 		amrapMinutes = Number.isFinite(value) ? value : 0;
@@ -158,70 +202,45 @@
 		state.lastCue = 0;
 
 		// --- LOGIC FOR CIRCUITS ---
-		if (workout.type === 'Circuit' || workout.type === 'Timed Rounds') {
-			const nextPhaseIndex = state.phaseIndex + 1;
-			if (workout.mode === 'Partner') {
-				// Partner Circuit
-                                if (nextPhaseIndex === 0) {
-                                        state.phaseIndex = 0;
-                                        state.phase = 'PARTNER A';
-                                        state.remaining = state.duration = sessionConfig.work;
-                                        whistleBell();
-                                } else if (nextPhaseIndex === 1) {
-                                        state.phaseIndex = 1;
-                                        state.phase = 'SWAP';
-                                        state.remaining = state.duration = sessionConfig.swap;
-                                        tone(420, 160);
-                                } else if (nextPhaseIndex === 2) {
-                                        state.phaseIndex = 2;
-                                        state.phase = 'PARTNER B';
-                                        state.remaining = state.duration = sessionConfig.work;
-                                        whistleBell();
-                                } else if (nextPhaseIndex === 3) {
-                                        state.phaseIndex = 3;
-                                        state.phase = 'MOVE';
-					state.remaining = state.duration = sessionConfig.move;
-					tone(420, 160);
-				} else {
-					state.currentStation++;
-					if (state.currentStation >= totalStations) {
-						state.currentStation = 0;
-						state.currentRound++;
-						if (state.currentRound > sessionConfig.rounds) {
-							workoutComplete();
-							return;
-						}
-					}
-					state.phaseIndex = 0;
-                                        state.phase = 'PARTNER A';
-                                        state.remaining = state.duration = sessionConfig.work;
-                                        whistleBell();
+                if (workout.type === 'Circuit' || workout.type === 'Timed Rounds') {
+                        const nextPhaseIndex = state.phaseIndex + 1;
+                        if (workout.mode === 'Partner') {
+                                const sequence = getPartnerSequence(state.currentStation);
+                                if (nextPhaseIndex < sequence.length) {
+                                        applyPhase(sequence[nextPhaseIndex], nextPhaseIndex);
+                                } else {
+                                        state.currentStation++;
+                                        if (state.currentStation >= totalStations) {
+                                                state.currentStation = 0;
+                                                state.currentRound++;
+                                                if (state.currentRound > sessionConfig.rounds) {
+                                                        workoutComplete();
+                                                        return;
+                                                }
+                                        }
+                                        state.phaseIndex = -1;
+                                        advancePhase();
+                                        return;
                                 }
-			} else {
-				// Individual Circuit
-				// Simplified Work -> Move logic
-				if (nextPhaseIndex % 2 === 0) {
-					state.phaseIndex = nextPhaseIndex;
-					state.phase = 'WORK';
-					state.remaining = state.duration = sessionConfig.work;
-					whistleBell();
-				} else {
-					state.currentStation++;
-					if (state.currentStation >= totalStations) {
-						state.currentStation = 0;
-						state.currentRound++;
-						if (state.currentRound > sessionConfig.rounds) {
-							workoutComplete();
-							return;
-						}
-					}
-					state.phaseIndex = nextPhaseIndex;
-					state.phase = 'MOVE';
-					state.remaining = state.duration = sessionConfig.move;
-					tone(420, 160);
-				}
-			}
-		}
+                        } else {
+                                // Individual Circuit
+                                // Simplified Work -> Move logic
+                                if (nextPhaseIndex % 2 === 0) {
+                                        applyPhase('WORK', nextPhaseIndex);
+                                } else {
+                                        state.currentStation++;
+                                        if (state.currentStation >= totalStations) {
+                                                state.currentStation = 0;
+                                                state.currentRound++;
+                                                if (state.currentRound > sessionConfig.rounds) {
+                                                        workoutComplete();
+                                                        return;
+                                                }
+                                        }
+                                        applyPhase('MOVE', nextPhaseIndex);
+                                }
+                        }
+                }
 		// --- LOGIC FOR EMOM ---
 		else if (workout.type === 'EMOM') {
 			state.currentRound++; // Use 'round' as the minute counter

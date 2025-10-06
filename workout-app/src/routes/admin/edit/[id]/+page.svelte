@@ -20,11 +20,16 @@
         let exercises = JSON.parse(JSON.stringify(data.workout.exercises));
         let structureMode = mode;
 
+        function normalizeStarter(value) {
+                return value?.toString?.().toUpperCase() === 'P2' ? 'P2' : 'P1';
+        }
+
         function convertToPartner(list) {
                 return list.map((exercise, index) => ({
                         name: exercise.name || `Station ${index + 1}`,
                         p1_task: exercise.p1_task ?? exercise.description ?? '',
-                        p2_task: exercise.p2_task ?? ''
+                        p2_task: exercise.p2_task ?? '',
+                        startsWith: normalizeStarter(exercise.startsWith ?? exercise.starter)
                 }));
         }
 
@@ -60,15 +65,22 @@
                                           {
                                                   name: `Station ${exercises.length + 1}`,
                                                   p1_task: '',
-                                                  p2_task: ''
+                                                  p2_task: '',
+                                                  startsWith: 'P1'
                                           }
                                   ]
                                 : [...exercises, { name: '', description: '' }];
         }
 
-	function removeExercise(index) {
-		exercises = exercises.filter((_, i) => i !== index);
-	}
+        function removeExercise(index) {
+                exercises = exercises.filter((_, i) => i !== index);
+        }
+
+        function updateStarter(index, value) {
+                exercises = exercises.map((exercise, i) =>
+                        i === index ? { ...exercise, startsWith: normalizeStarter(value) } : exercise
+                );
+        }
 
 	// The main difference is this function now UPDATES an existing document.
         async function updateWorkout() {
@@ -91,20 +103,33 @@
 			const workoutRef = doc(db, 'workouts', data.workout.id);
 
 			// 2. Create the object with the updated data
-			const updatedData = {
-				title,
-				type,
-				mode,
-				isBenchmark,
-				notes,
-				exercises
-			};
+                        const normalizedExercises =
+                                mode === 'Partner'
+                                        ? exercises.map((exercise, index) => ({
+                                                  name: exercise.name || `Station ${index + 1}`,
+                                                  p1_task: exercise.p1_task,
+                                                  p2_task: exercise.p2_task,
+                                                  startsWith: normalizeStarter(exercise.startsWith)
+                                          }))
+                                        : exercises.map((exercise) => ({
+                                                  name: exercise.name,
+                                                  description: exercise.description
+                                          }));
 
-			// 3. Call 'updateDoc' instead of 'addDoc'
-			await updateDoc(workoutRef, updatedData);
+                        const updatedData = {
+                                title,
+                                type,
+                                mode,
+                                isBenchmark,
+                                notes,
+                                exercises: normalizedExercises
+                        };
 
-			// 4. Save any new unique exercises for the autocomplete feature
-                        for (const exercise of exercises) {
+                        // 3. Call 'updateDoc' instead of 'addDoc'
+                        await updateDoc(workoutRef, updatedData);
+
+                        // 4. Save any new unique exercises for the autocomplete feature
+                        for (const exercise of normalizedExercises) {
                                 const namesToSave =
                                         mode === 'Partner' ? [exercise.p1_task, exercise.p2_task] : [exercise.name];
                                 for (const name of namesToSave) {
@@ -212,6 +237,31 @@
                                                                 required
                                                                 list="exercise-suggestions"
                                                         />
+                                                </div>
+                                                <div class="starter-select">
+                                                        <span class="starter-label">Who starts this station?</span>
+                                                        <div class="starter-options">
+                                                                <label>
+                                                                        <input
+                                                                                type="radio"
+                                                                                name={`starter-${i}`}
+                                                                                value="P1"
+                                                                                checked={normalizeStarter(exercise.startsWith) === 'P1'}
+                                                                                on:change={() => updateStarter(i, 'P1')}
+                                                                        />
+                                                                        Partner A
+                                                                </label>
+                                                                <label>
+                                                                        <input
+                                                                                type="radio"
+                                                                                name={`starter-${i}`}
+                                                                                value="P2"
+                                                                                checked={normalizeStarter(exercise.startsWith) === 'P2'}
+                                                                                on:change={() => updateStarter(i, 'P2')}
+                                                                        />
+                                                                        Partner B
+                                                                </label>
+                                                        </div>
                                                 </div>
                                                 <button type="button" class="remove-btn" on:click={() => removeExercise(i)}
                                                         >&times;</button
@@ -408,5 +458,32 @@
         }
         .partner-tasks input {
                 width: 100%;
+        }
+        .starter-select {
+                margin-top: 1rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
+        }
+        .starter-label {
+                font-size: 0.75rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: var(--text-muted);
+        }
+        .starter-options {
+                display: flex;
+                gap: 1rem;
+                flex-wrap: wrap;
+        }
+        .starter-options label {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+                font-size: 0.85rem;
+                color: var(--text-muted);
+        }
+        .starter-options input[type='radio'] {
+                accent-color: var(--yellow);
         }
 </style>
