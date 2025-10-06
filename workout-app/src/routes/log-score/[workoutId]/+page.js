@@ -1,9 +1,11 @@
-import { doc, getDoc } from 'firebase/firestore';
-import { error } from '@sveltejs/kit';
+// src/routes/log-score/[workoutId]/+page.js
+import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '$lib/firebase';
+import { error } from '@sveltejs/kit';
 
 /** @type {import('./$types').PageLoad} */
 export async function load({ params }) {
+        // Fetch the specific workout data
         const workoutRef = doc(db, 'workouts', params.workoutId);
         const workoutSnap = await getDoc(workoutRef);
 
@@ -11,12 +13,17 @@ export async function load({ params }) {
                 throw error(404, 'Workout not found');
         }
 
-        const data = workoutSnap.data();
+        // Fetch all user profiles to populate the dropdown
+        const profilesSnap = await getDocs(collection(db, 'profiles'));
+        const profiles = profilesSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
         const workout = {
-                ...data,
                 id: workoutSnap.id,
-                createdAt: data.createdAt?.toDate().toISOString() ?? null
+                ...workoutSnap.data()
         };
 
-        return { workout };
+        return {
+                workout,
+                profiles
+        };
 }

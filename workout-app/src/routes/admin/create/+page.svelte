@@ -17,11 +17,16 @@
         let exercises = [{ name: '', description: '' }];
         let structureMode = mode;
 
+        function normalizeStarter(value) {
+                return value?.toString?.().toUpperCase() === 'P2' ? 'P2' : 'P1';
+        }
+
         function convertToPartner(list) {
                 return list.map((exercise, index) => ({
                         name: exercise.name || `Station ${index + 1}`,
                         p1_task: exercise.p1_task ?? exercise.description ?? '',
-                        p2_task: exercise.p2_task ?? ''
+                        p2_task: exercise.p2_task ?? '',
+                        startsWith: normalizeStarter(exercise.startsWith ?? exercise.starter)
                 }));
         }
 
@@ -59,20 +64,27 @@
                                           {
                                                   name: `Station ${exercises.length + 1}`,
                                                   p1_task: '',
-                                                  p2_task: ''
+                                                  p2_task: '',
+                                                  startsWith: 'P1'
                                           }
                                   ]
                                 : [...exercises, { name: '', description: '' }];
         }
 
-	function removeExercise(index) {
-		exercises = exercises.filter((_, i) => i !== index);
-	}
+        function removeExercise(index) {
+                exercises = exercises.filter((_, i) => i !== index);
+        }
 
-	async function saveWorkout() {
-		// Validation logic needs to be aware of the different structures
-		const isInvalid =
-			mode === 'Partner'
+        function updateStarter(index, value) {
+                exercises = exercises.map((exercise, i) =>
+                        i === index ? { ...exercise, startsWith: normalizeStarter(value) } : exercise
+                );
+        }
+
+        async function saveWorkout() {
+                // Validation logic needs to be aware of the different structures
+                const isInvalid =
+                        mode === 'Partner'
 				? exercises.some((ex) => !ex.name || !ex.p1_task || !ex.p2_task)
 				: exercises.some((ex) => !ex.name);
 
@@ -84,23 +96,36 @@
 		isSubmitting = true;
 		errorMessage = '';
 		successMessage = '';
-		try {
+                try {
+                        const normalizedExercises =
+                                mode === 'Partner'
+                                        ? exercises.map((exercise, index) => ({
+                                                  name: exercise.name || `Station ${index + 1}`,
+                                                  p1_task: exercise.p1_task,
+                                                  p2_task: exercise.p2_task,
+                                                  startsWith: normalizeStarter(exercise.startsWith)
+                                          }))
+                                        : exercises.map((exercise) => ({
+                                                  name: exercise.name,
+                                                  description: exercise.description
+                                          }));
+
                         const workoutData = {
                                 title,
                                 type,
                                 mode,
                                 isBenchmark,
                                 notes,
-				exercises,
-				creatorId: auth.currentUser.uid,
-				createdAt: serverTimestamp()
-			};
-			await addDoc(collection(db, 'workouts'), workoutData);
+                                exercises: normalizedExercises,
+                                creatorId: auth.currentUser.uid,
+                                createdAt: serverTimestamp()
+                        };
+                        await addDoc(collection(db, 'workouts'), workoutData);
 
-                        for (const exercise of exercises) {
+                        for (const exercise of normalizedExercises) {
                                 // Store individual names or Partner A/B tasks for future suggestions
-				const namesToSave =
-					mode === 'Partner' ? [exercise.p1_task, exercise.p2_task] : [exercise.name];
+                                const namesToSave =
+                                        mode === 'Partner' ? [exercise.p1_task, exercise.p2_task] : [exercise.name];
 				for (const name of namesToSave) {
 					const exerciseName = name.trim();
 					if (exerciseName) {
@@ -210,6 +235,31 @@
                                                                 required
                                                                 list="exercise-suggestions"
                                                         />
+                                                </div>
+                                                <div class="starter-select">
+                                                        <span class="starter-label">Who starts this station?</span>
+                                                        <div class="starter-options">
+                                                                <label>
+                                                                        <input
+                                                                                type="radio"
+                                                                                name={`starter-${i}`}
+                                                                                value="P1"
+                                                                                checked={normalizeStarter(exercise.startsWith) === 'P1'}
+                                                                                on:change={() => updateStarter(i, 'P1')}
+                                                                        />
+                                                                        Partner A
+                                                                </label>
+                                                                <label>
+                                                                        <input
+                                                                                type="radio"
+                                                                                name={`starter-${i}`}
+                                                                                value="P2"
+                                                                                checked={normalizeStarter(exercise.startsWith) === 'P2'}
+                                                                                on:change={() => updateStarter(i, 'P2')}
+                                                                        />
+                                                                        Partner B
+                                                                </label>
+                                                        </div>
                                                 </div>
                                                 <button type="button" class="remove-btn" on:click={() => removeExercise(i)}
                                                         >&times;</button
@@ -402,6 +452,33 @@
         }
         .partner-tasks input {
                 width: 100%;
+        }
+        .starter-select {
+                margin-top: 1rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
+        }
+        .starter-label {
+                font-size: 0.75rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: var(--text-muted);
+        }
+        .starter-options {
+                display: flex;
+                gap: 1rem;
+                flex-wrap: wrap;
+        }
+        .starter-options label {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+                font-size: 0.85rem;
+                color: var(--text-muted);
+        }
+        .starter-options input[type='radio'] {
+                accent-color: var(--yellow);
         }
         .partner-helper {
                 margin: 0.5rem 0 1rem;
