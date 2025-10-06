@@ -1,6 +1,8 @@
 <script>
 	// @ts-nocheck
-	import { onDestroy } from 'svelte';
+        import { onDestroy } from 'svelte';
+        import { db } from '$lib/firebase';
+        import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
 	export let data;
 	const { workout } = data;
@@ -66,9 +68,15 @@
                 move: 15,
                 rounds: 1,
                 totalTime: 600,
-                showStationCallout: false
+                showStationCallout: false,
+                amrapTagline: ''
         };
-	let amrapMinutes = sessionConfig.totalTime / 60;
+        let amrapMinutes = sessionConfig.totalTime / 60;
+        const defaultAmrapTagline = (minutes) =>
+                `As Many Rounds As Possible in ${Math.max(1, Math.round(minutes || 0))} minutes`;
+        sessionConfig.amrapTagline =
+                workout.amrapTagline || defaultAmrapTagline(sessionConfig.totalTime / 60);
+        let amrapTaglineDirty = Boolean(workout.amrapTagline);
 	let state = {
 		phase: 'Ready',
 		phaseIndex: -1,
@@ -80,8 +88,19 @@
 		isComplete: false,
 		lastCue: 0
 	};
-	let timerId = null;
-	let isSetupVisible = false;
+        let timerId = null;
+        let isSetupVisible = false;
+        let attendeeInput = '';
+        function makeId() {
+                return Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
+        }
+        let attendeeRecords = Array.isArray(workout.attendees)
+                ? workout.attendees.map((name) => ({ id: makeId(), name, rounds: '' }))
+                : [];
+        attendeeInput = attendeeRecords.map((record) => record.name).join('\n');
+        let isSavingResults = false;
+        let hasSavedResults = false;
+        let resultsStatus = { type: 'idle', message: '' };
 
 	// --- Staff Roster Logic ---
 	let totalStations = workout.exercises?.length ?? 0;
@@ -121,6 +140,14 @@
                 state.duration > 0
                         ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100))
                         : 0;
+        $: formattedTotalMinutes = sessionConfig.totalTime
+                ? sessionConfig.totalTime % 60 === 0
+                        ? Math.round(sessionConfig.totalTime / 60).toString()
+                        : (sessionConfig.totalTime / 60).toFixed(1)
+                : '0';
+        $: elapsedMinutes = sessionConfig.totalTime
+                ? (Math.max(0, sessionConfig.totalTime - state.remaining) / 60).toFixed(1)
+                : '0.0';
         $: if (workout.type === 'AMRAP') {
                 amrapMinutes = sessionConfig.totalTime / 60;
         }
@@ -201,13 +228,111 @@
                 playCueForPhase(phase);
         }
 
-	function handleAmrapInput(event) {
-		const value = Number(event.target.value);
-		amrapMinutes = Number.isFinite(value) ? value : 0;
-		sessionConfig.totalTime = Math.max(0, amrapMinutes * 60);
-	}
+        function handleAmrapInput(event) {
+                const value = Number(event.target.value);
+                amrapMinutes = Number.isFinite(value) ? value : 0;
+                sessionConfig.totalTime = Math.max(0, amrapMinutes * 60);
+                if (!amrapTaglineDirty) {
+                        sessionConfig.amrapTagline = defaultAmrapTagline(amrapMinutes);
+                }
+        }
 
-	// --- MULTI-MODE TIMER LOGIC ---
+        function handleTaglineInput(event) {
+                sessionConfig.amrapTagline = event.target.value;
+                amrapTaglineDirty = sessionConfig.amrapTagline.trim() !== defaultAmrapTagline(amrapMinutes);
+        }
+
+        function parseAttendeeList(value = '') {
+                return value
+                        .split(/\n+/)
+                        .map((name) => name.trim())
+                        .filter(Boolean);
+        }
+
+        function applyAttendeeInput() {
+                const names = parseAttendeeList(attendeeInput);
+                if (!names.length) {
+                        attendeeRecords = [];
+                        return;
+                }
+                const existing = new Map(
+                        attendeeRecords.map((record) => [record.name.trim().toLowerCase(), record])
+                );
+                attendeeRecords = names.map((name) => {
+                        const key = name.trim().toLowerCase();
+                        const match = existing.get(key);
+                        return match ? { ...match, name } : { id: makeId(), name, rounds: '' };
+                });
+        }
+
+        function updateAttendeeRounds(index, value) {
+                attendeeRecords = attendeeRecords.map((record, i) =>
+                        i === index ? { ...record, rounds: value } : record
+                );
+        }
+
+        async function saveAmrapResults() {
+                resultsStatus = { type: 'idle', message: '' };
+                if (!attendeeRecords.length) {
+                        resultsStatus = {
+                                type: 'error',
+                                message: 'Add at least one attendee in Setup before saving results.'
+                        };
+                        return;
+                }
+                const parsed = attendeeRecords.map((record) => ({
+                        ...record,
+                        numericRounds: Number.parseFloat(record.rounds)
+                }));
+                const invalid = parsed.filter(
+                        (record) => record.rounds !== '' && !Number.isFinite(record.numericRounds)
+                );
+                if (invalid.length) {
+                        resultsStatus = {
+                                type: 'error',
+                                message: 'Please enter a numeric rounds value for each attendee.'
+                        };
+                        return;
+                }
+                const withScores = parsed.filter((record) => Number.isFinite(record.numericRounds));
+                if (!withScores.length) {
+                        resultsStatus = {
+                                type: 'error',
+                                message: 'Enter the number of rounds completed before saving.'
+                        };
+                        return;
+                }
+                isSavingResults = true;
+                try {
+                        await addDoc(collection(db, 'benchmarkResults'), {
+                                workoutId: workout.id,
+                                workoutTitle: workout.title,
+                                workoutType: workout.type,
+                                totalSeconds: sessionConfig.totalTime,
+                                tagline: sessionConfig.amrapTagline,
+                                recordedAt: serverTimestamp(),
+                                results: withScores.map((record) => ({
+                                        name: record.name,
+                                        rounds: record.numericRounds
+                                }))
+                        });
+                        hasSavedResults = true;
+                        resultsStatus = {
+                                type: 'success',
+                                message: 'Benchmark results saved. You can review them next time you retest.'
+                        };
+                } catch (error) {
+                        console.error('Error saving AMRAP results:', error);
+                        resultsStatus = {
+                                type: 'error',
+                                message: 'Unable to save results right now. Please try again.'
+                        };
+                } finally {
+                        isSavingResults = false;
+                }
+        }
+
+        // --- MULTI-MODE TIMER LOGIC ---
 	function advancePhase() {
 		if (state.isComplete) return;
 		state.lastCue = 0;
@@ -266,9 +391,10 @@
 		}
 	}
 
-	function tick() {
-		state.remaining -= 0.1;
-		const secs = Math.ceil(state.remaining);
+        function tick() {
+                state.remaining -= 0.1;
+                state.remaining = Math.max(0, state.remaining);
+                const secs = Math.ceil(state.remaining);
 		if (secs <= 3 && secs >= 1 && secs !== state.lastCue) {
 			state.lastCue = secs;
 			countBeep(secs);
@@ -284,60 +410,80 @@
 		state = state;
 	}
 
-	function startTimer() {
-		if (state.isComplete || state.isRunning || totalStations === 0) return;
-		if (state.phaseIndex === -1) {
-			if (workout.type === 'AMRAP') {
-				state.phase = 'WORK';
-				state.remaining = state.duration = sessionConfig.totalTime;
-				whistleBell();
-			} else {
-				advancePhase();
-			}
-		}
+        function startTimer() {
+                if (state.isComplete || state.isRunning) return;
+                if (workout.type !== 'AMRAP' && totalStations === 0) return;
+                if (state.phaseIndex === -1) {
+                        if (workout.type === 'AMRAP') {
+                                state.phase = 'WORK';
+                                state.remaining = state.duration = sessionConfig.totalTime;
+                                state.phaseIndex = 0;
+                                whistleBell();
+                        } else {
+                                advancePhase();
+                        }
+                }
 		state.isRunning = true;
 		timerId = setInterval(tick, 100);
 		commitAllAssignments();
 	}
 
-	function pauseTimer() {
-		if (!state.isRunning) return;
-		state.isRunning = false;
-		clearInterval(timerId);
-	}
+        function pauseTimer() {
+                if (!state.isRunning) return;
+                state.isRunning = false;
+                clearInterval(timerId);
+                timerId = null;
+        }
 
-	function resetTimer() {
-		pauseTimer();
-		state.phase = 'Ready';
-		state.phaseIndex = -1;
-		state.currentStation = 0;
-		state.currentRound = 1;
-		state.isComplete = false;
-		// Set initial time based on workout type
-		if (workout.type === 'AMRAP') {
-			state.remaining = state.duration = sessionConfig.totalTime;
-		} else if (workout.type === 'EMOM') {
-			state.remaining = state.duration = 60;
-		} else {
-			state.remaining = state.duration = sessionConfig.work;
-		}
-		state = state;
-	}
-	function workoutComplete() {
-		pauseTimer();
-		state.phase = 'SESSION COMPLETE!';
-		state.isComplete = true;
-		state = state;
-		whistleBell();
-	}
-	function openSetup() {
-		pauseTimer();
-		isSetupVisible = true;
-	}
-	function closeSetup() {
-		commitAllAssignments();
-		isSetupVisible = false;
-	}
+        function resetTimer() {
+                pauseTimer();
+                state.phase = 'Ready';
+                state.phaseIndex = -1;
+                state.currentStation = 0;
+                state.currentRound = 1;
+                state.isComplete = false;
+                hasSavedResults = false;
+                resultsStatus = { type: 'idle', message: '' };
+                attendeeRecords = attendeeRecords.map((record) => ({ ...record, rounds: '' }));
+                // Set initial time based on workout type
+                if (workout.type === 'AMRAP') {
+                        state.remaining = state.duration = sessionConfig.totalTime;
+                } else if (workout.type === 'EMOM') {
+                        state.remaining = state.duration = 60;
+                } else {
+                        state.remaining = state.duration = sessionConfig.work;
+                }
+                state = state;
+        }
+        function workoutComplete() {
+                pauseTimer();
+                state.phase = 'SESSION COMPLETE!';
+                state.isComplete = true;
+                state.remaining = 0;
+                state = state;
+                whistleBell();
+        }
+        function finishWorkout() {
+                if (!state.isComplete) {
+                        workoutComplete();
+                }
+        }
+        function applySetup() {
+                commitAllAssignments();
+                applyAttendeeInput();
+                isSetupVisible = false;
+                resetTimer();
+        }
+        function openSetup() {
+                pauseTimer();
+                attendeeInput = attendeeRecords.map((record) => record.name).join('\n');
+                isSetupVisible = true;
+        }
+        function closeSetup() {
+                commitAllAssignments();
+                attendeeInput = attendeeRecords.map((record) => record.name).join('\n');
+                isSetupVisible = false;
+        }
 	function formatTime(s) {
 		const secs = Math.max(0, Math.ceil(s));
 		return (
@@ -345,15 +491,31 @@
 		);
 	}
 
-	onDestroy(() => clearInterval(timerId));
+        onDestroy(() => clearInterval(timerId));
+
+        $: startButtonLabel = state.isRunning
+                ? 'Pause'
+                : state.phaseIndex >= 0 && !state.isComplete
+                ? 'Resume'
+                : 'Start';
+
+        function getExerciseDetail(exercise) {
+                return (
+                        exercise?.description ||
+                        exercise?.target ||
+                        exercise?.reps ||
+                        exercise?.details ||
+                        ''
+                );
+        }
 </script>
 
 {#if isSetupVisible}
 	<div class="modal-overlay">
 		<div class="modal-content">
 			<h2>Session Setup</h2>
-			<div class="setup-form">
-				{#if workout.type === 'Circuit' || workout.type === 'Timed Rounds'}
+                        <div class="setup-form">
+                                {#if workout.type === 'Circuit' || workout.type === 'Timed Rounds'}
                                         <div class="form-group">
                                                 <label for="work">Work per Partner (s)</label><input
                                                         id="work"
@@ -402,26 +564,51 @@
 						/>
 					</div>
 				{:else if workout.type === 'AMRAP'}
-					<div class="form-group">
-						<label for="totalTime">Total Time (min)</label><input
-							id="totalTime"
-							type="number"
-							min="1"
-							bind:value={amrapMinutes}
-							on:input={handleAmrapInput}
-						/>
-					</div>
-				{:else if workout.type === 'EMOM'}
-					<div class="form-group">
-						<label for="rounds">Total Minutes</label><input
-							id="rounds"
-							type="number"
-							min="1"
-							bind:value={sessionConfig.rounds}
-						/>
-					</div>
-				{/if}
-			</div>
+                                        <div class="form-group">
+                                                <label for="totalTime">Total Time (min)</label><input
+                                                        id="totalTime"
+                                                        type="number"
+                                                        min="1"
+                                                        bind:value={amrapMinutes}
+                                                        on:input={handleAmrapInput}
+                                                />
+                                        </div>
+                                        <div class="form-group form-group--wide">
+                                                <label for="tagline">Timer Tagline</label><input
+                                                        id="tagline"
+                                                        type="text"
+                                                        bind:value={sessionConfig.amrapTagline}
+                                                        on:input={handleTaglineInput}
+                                                        placeholder={`As Many Rounds As Possible in ${amrapMinutes || 0} minutes`}
+                                                />
+                                                <p class="input-hint">
+                                                        Displayed beneath the countdown. Use it to describe the benchmark stimulus.
+                                                </p>
+                                        </div>
+                                {:else if workout.type === 'EMOM'}
+                                        <div class="form-group">
+                                                <label for="rounds">Total Minutes</label><input
+                                                        id="rounds"
+                                                        type="number"
+                                                        min="1"
+                                                        bind:value={sessionConfig.rounds}
+                                                />
+                                        </div>
+                                {/if}
+                        </div>
+                        {#if workout.type === 'AMRAP'}
+                                <div class="attendee-setup">
+                                        <div class="attendee-setup__header">
+                                                <h3>Attendee Roster</h3>
+                                                <p class="input-hint">Enter one name per line to track benchmark scores.</p>
+                                        </div>
+                                        <textarea
+                                                rows="5"
+                                                bind:value={attendeeInput}
+                                                placeholder="e.g. Alex Johnson\nMorgan Lee\nSam Patel"
+                                        ></textarea>
+                                </div>
+                        {/if}
 			{#if workout.mode === 'Partner'}
 				<div class="assignment-setup">
 					<h3>Starting Positions</h3>
@@ -442,16 +629,10 @@
 			{/if}
 			<div class="modal-actions">
 				<button class="secondary" on:click={closeSetup}>Close</button>
-				<button
-					class="primary"
-					on:click={() => {
-						isSetupVisible = false;
-						resetTimer();
-					}}>Apply & Close</button
-				>
-			</div>
-		</div>
-	</div>
+                                <button class="primary" on:click={applySetup}>Apply & Close</button>
+                        </div>
+                </div>
+        </div>
 {/if}
 
 <div class="timer-wrapper" class:blur={isSetupVisible}>
@@ -531,55 +712,193 @@
 								)}/{sessionConfig.rounds}</span
 							>
 						</div>
-						<div class="control-row">
-							<button class="primary" on:click={state.isRunning ? pauseTimer : startTimer}
-								>{state.isRunning ? 'Pause' : 'Start'}</button
-							>
-							<button class="secondary" on:click={resetTimer}>Reset</button>
-						</div>
-					</footer>
-				</div>
-			</main>
+                                                <div class="control-row">
+                                                        <button
+                                                                class="primary"
+                                                                on:click={state.isRunning ? pauseTimer : startTimer}
+                                                                disabled={state.isComplete}
+                                                        >
+                                                                {startButtonLabel}
+                                                        </button>
+                                                        <button class="secondary" on:click={resetTimer}>Reset</button>
+                                                </div>
+                                        </footer>
+                                </div>
+                        </main>
 		</div>
-	{:else}
-		<div class="focus-timer-layout">
-			<header class="timer-header">
-				<h1 class="workout-title">{workout.title}</h1>
-				<div class="round-info">
-					{#if workout.type === 'EMOM'}
-						<span>Minute {state.currentRound} / {sessionConfig.rounds}</span>
-					{/if}
-				</div>
-			</header>
-			<main class="timer-main">
-				<div class="time-display">{formatTime(state.remaining)}</div>
-				<div class="progress-bar-container">
-					<div class="progress-bar-fill" style="width: {progress}%"></div>
-				</div>
-			</main>
-			<section class="focus-exercises">
-				<h2>{workout.type === 'EMOM' ? 'This Minute:' : 'Complete This Round:'}</h2>
-				<div class="exercise-list">
-					{#each workout.exercises as exercise, i (exercise.id ?? exercise.name ?? i)}
-						<div
-							class="exercise-item"
-							class:current={workout.type === 'EMOM' && i === state.currentStation}
-						>
-							<span>{exercise.name}</span>
-							<span>{exercise.description}</span>
-						</div>
-					{/each}
-				</div>
-			</section>
-			<footer class="control-row">
-				<button class="secondary" on:click={openSetup}>Setup</button>
-				<button class="primary" on:click={state.isRunning ? pauseTimer : startTimer}
-					>{state.isRunning ? 'Pause' : 'Start'}</button
-				>
-				<button class="secondary" on:click={resetTimer}>Reset</button>
-			</footer>
-		</div>
-	{/if}
+        {:else if workout.type === 'AMRAP'}
+                <div class="amrap-layout">
+                        <header class="amrap-header">
+                                <div class="amrap-header__titles">
+                                        {#if workout.subtitle}<span class="amrap-subtitle">{workout.subtitle}</span>{/if}
+                                        <h1 class="workout-title">{workout.title}</h1>
+                                </div>
+                                <button class="secondary" on:click={openSetup}>Setup</button>
+                        </header>
+                        <div class="amrap-body">
+                                <section class="amrap-timer-card">
+                                        <div class="timer-face">
+                                                <span class="phase-display">{state.phase}</span>
+                                                <div class="time-display time-display--hero">{formatTime(state.remaining)}</div>
+                                                <p class="timer-tagline">{sessionConfig.amrapTagline}</p>
+                                                <div class="progress-bar-container progress-bar-container--thin">
+                                                        <div class="progress-bar-fill" style="width: {progress}%"></div>
+                                                </div>
+                                        </div>
+                                        <div class="timer-actions">
+                                                <button
+                                                        class="primary"
+                                                        on:click={state.isRunning ? pauseTimer : startTimer}
+                                                        disabled={state.isComplete || (workout.exercises?.length ?? 0) === 0}
+                                                >
+                                                        {startButtonLabel}
+                                                </button>
+                                                <button
+                                                        class="finish-btn"
+                                                        on:click={finishWorkout}
+                                                        disabled={state.phaseIndex === -1 || state.isComplete}
+                                                >
+                                                        Finish
+                                                </button>
+                                                <button class="secondary" on:click={resetTimer}>Reset</button>
+                                        </div>
+                                        <div class="timer-meta">
+                                                <span>Total time: {formattedTotalMinutes} min</span>
+                                                <span>Elapsed: {elapsedMinutes} min</span>
+                                                <span>Current round: {state.currentRound}</span>
+                                        </div>
+                                </section>
+                                <section class="amrap-exercises">
+                                        <header class="amrap-exercises__header">
+                                                <h2>Complete each round</h2>
+                                                <span class="amrap-exercises__label">Target</span>
+                                        </header>
+                                        <div class="amrap-exercise-list">
+                                                {#each workout.exercises as exercise, i (exercise.id ?? exercise.name ?? i)}
+                                                        <div class="amrap-exercise-row">
+                                                                <div class="amrap-exercise__name">
+                                                                        <span class="exercise-pill">{i + 1}</span>
+                                                                        <span>{exercise.name}</span>
+                                                                </div>
+                                                                <span class="amrap-exercise__detail">
+                                                                        {#if getExerciseDetail(exercise)}
+                                                                                {getExerciseDetail(exercise)}
+                                                                        {:else}
+                                                                                &mdash;
+                                                                        {/if}
+                                                                </span>
+                                                        </div>
+                                                {/each}
+                                        </div>
+                                </section>
+                                <aside class="amrap-sidebar">
+                                        <div class="attendee-card">
+                                                <header>
+                                                        <h3>Attendees</h3>
+                                                        <span class="badge badge--count">{attendeeRecords.length}</span>
+                                                </header>
+                                                {#if attendeeRecords.length === 0}
+                                                        <p class="empty-state">
+                                                                Add your athletes from the <strong>Setup</strong> panel to track benchmark
+                                                                rounds.
+                                                        </p>
+                                                {:else}
+                                                        <ul>
+                                                                {#each attendeeRecords as attendee, i (attendee.id)}
+                                                                        <li class="attendee-row">
+                                                                                <div class="attendee-info">
+                                                                                        <span class="attendee-index">{i + 1}</span>
+                                                                                        <span class="attendee-name">{attendee.name}</span>
+                                                                                </div>
+                                                                                {#if state.isComplete}
+                                                                                        <input
+                                                                                                type="number"
+                                                                                                min="0"
+                                                                                                step="0.25"
+                                                                                                placeholder="Rounds"
+                                                                                                value={attendee.rounds}
+                                                                                                on:input={(event) => updateAttendeeRounds(i, event.target.value)}
+                                                                                        />
+                                                                                {:else}
+                                                                                        <span class="attendee-status"
+                                                                                                >{state.isRunning ? 'In progress' : 'Ready'}</span
+                                                                                        >
+                                                                                {/if}
+                                                                        </li>
+                                                                {/each}
+                                                        </ul>
+                                                {/if}
+                                        </div>
+                                        {#if state.isComplete}
+                                                <div class="results-card">
+                                                        <h3>Benchmark Results</h3>
+                                                        <p class="input-hint">
+                                                                Log rounds for each attendee so you can compare scores when you retest.
+                                                        </p>
+                                                        {#if resultsStatus.message}
+                                                                <p class={`status-message ${resultsStatus.type}`}>{resultsStatus.message}</p>
+                                                        {/if}
+                                                        <button
+                                                                class="primary"
+                                                                on:click={saveAmrapResults}
+                                                                disabled={isSavingResults || hasSavedResults}
+                                                        >
+                                                                {#if isSavingResults}
+                                                                        Saving...
+                                                                {:else if hasSavedResults}
+                                                                        Saved
+                                                                {:else}
+                                                                        Save Results
+                                                                {/if}
+                                                        </button>
+                                                </div>
+                                        {/if}
+                                </aside>
+                        </div>
+                </div>
+        {:else}
+                <div class="focus-timer-layout">
+                        <header class="timer-header">
+                                <h1 class="workout-title">{workout.title}</h1>
+                                <div class="round-info">
+                                        {#if workout.type === 'EMOM'}
+                                                <span>Minute {state.currentRound} / {sessionConfig.rounds}</span>
+                                        {/if}
+                                </div>
+                        </header>
+                        <main class="timer-main">
+                                <div class="time-display">{formatTime(state.remaining)}</div>
+                                <div class="progress-bar-container">
+                                        <div class="progress-bar-fill" style="width: {progress}%"></div>
+                                </div>
+                        </main>
+                        <section class="focus-exercises">
+                                <h2>{workout.type === 'EMOM' ? 'This Minute:' : 'Complete This Round:'}</h2>
+                                <div class="exercise-list">
+                                        {#each workout.exercises as exercise, i (exercise.id ?? exercise.name ?? i)}
+                                                <div
+                                                        class="exercise-item"
+                                                        class:current={workout.type === 'EMOM' && i === state.currentStation}
+                                                >
+                                                        <span>{exercise.name}</span>
+                                                        {#if getExerciseDetail(exercise)}<span>{getExerciseDetail(exercise)}</span>{/if}
+                                                </div>
+                                        {/each}
+                                </div>
+                        </section>
+                        <footer class="control-row">
+                                <button class="secondary" on:click={openSetup}>Setup</button>
+                                <button
+                                        class="primary"
+                                        on:click={state.isRunning ? pauseTimer : startTimer}
+                                        disabled={state.isComplete}
+                                >
+                                        {startButtonLabel}
+                                </button>
+                                <button class="secondary" on:click={resetTimer}>Reset</button>
+                        </footer>
+                </div>
+        {/if}
 </div>
 
 <style>
@@ -653,6 +972,30 @@
                 background: var(--bg-main);
                 color: var(--text-primary);
         }
+        .form-group--wide {
+                grid-column: 1 / -1;
+        }
+        .attendee-setup {
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+        }
+        .attendee-setup__header {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+        }
+        .attendee-setup textarea {
+                width: 100%;
+                min-height: 140px;
+                resize: vertical;
+                border-radius: 12px;
+                border: 1px solid var(--border-color);
+                background: var(--bg-main);
+                color: var(--text-primary);
+                padding: 0.75rem 1rem;
+                font-family: var(--font-body);
+        }
         .checkbox-group {
                 align-self: flex-start;
         }
@@ -708,13 +1051,371 @@
 		background: var(--surface-2);
 		color: var(--text-secondary);
 	}
-	.control-row button.primary,
-	.modal-actions button.primary {
-		background: var(--brand-green);
-		color: var(--text-primary);
-	}
+        .control-row button.primary,
+        .modal-actions button.primary {
+                background: var(--brand-green);
+                color: var(--text-primary);
+        }
 
-	/* --- Circuit Layout Styles --- */
+        /* --- AMRAP Benchmark Layout --- */
+        .amrap-layout {
+                display: flex;
+                flex-direction: column;
+                gap: 1.5rem;
+                min-height: 100vh;
+                padding: 2rem clamp(1rem, 3vw, 3rem);
+        }
+        .amrap-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 1rem;
+        }
+        .amrap-header__titles {
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
+        }
+        .amrap-subtitle {
+                text-transform: uppercase;
+                letter-spacing: 0.12em;
+                font-size: 0.85rem;
+                color: var(--text-secondary);
+        }
+        .amrap-header button.secondary {
+                border-radius: 999px;
+                border: 1px solid var(--border-color);
+                padding: 0.6rem 1.75rem;
+                font-weight: 600;
+                color: var(--text-secondary);
+                background: transparent;
+        }
+        .amrap-header button.secondary:hover {
+                color: var(--text-primary);
+                border-color: var(--text-secondary);
+        }
+        .amrap-body {
+                display: grid;
+                grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(220px, 0.8fr);
+                grid-template-areas: 'timer exercises sidebar';
+                gap: 1.5rem;
+                align-items: start;
+        }
+        .amrap-timer-card {
+                grid-area: timer;
+                background: var(--bg-panel);
+                border-radius: 1.5rem;
+                border: 1px solid var(--border-color);
+                padding: 2rem;
+                display: flex;
+                flex-direction: column;
+                gap: 1.5rem;
+        }
+        .timer-face {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 0.75rem;
+        }
+        .amrap-timer-card .phase-display {
+                font-size: 1rem;
+                letter-spacing: 0.2em;
+                text-transform: uppercase;
+                color: var(--text-secondary);
+        }
+        .time-display--hero {
+                font-size: clamp(4rem, 10vw, 8rem);
+                line-height: 1;
+                font-family: var(--font-display);
+        }
+        .timer-tagline {
+                margin: 0.25rem 0 0;
+                font-size: 1rem;
+                text-align: center;
+                color: var(--text-secondary);
+                letter-spacing: 0.08em;
+        }
+        .progress-bar-container--thin {
+                height: 8px;
+                border-radius: 999px;
+                overflow: hidden;
+                width: 100%;
+        }
+        .progress-bar-container--thin .progress-bar-fill {
+                height: 100%;
+                border-radius: 999px;
+                background: var(--brand-green);
+        }
+        .timer-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.75rem;
+                justify-content: center;
+        }
+        .timer-actions button {
+                border-radius: 999px;
+                font-size: 1rem;
+                padding: 0.75rem 2.25rem;
+                font-weight: 700;
+                cursor: pointer;
+                border: none;
+        }
+        .timer-actions .primary {
+                background: var(--brand-green);
+                color: var(--text-primary);
+        }
+        .timer-actions .primary:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+        }
+        .timer-actions .finish-btn {
+                background: var(--brand-yellow);
+                color: var(--bg-main);
+        }
+        .timer-actions .finish-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+        }
+        .timer-actions .secondary {
+                background: transparent;
+                border: 1px solid var(--border-color);
+                color: var(--text-secondary);
+        }
+        .timer-actions .secondary:hover {
+                color: var(--text-primary);
+                border-color: var(--text-secondary);
+        }
+        .timer-actions .secondary:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+        }
+        .timer-meta {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.75rem;
+                justify-content: center;
+                color: var(--text-secondary);
+                font-size: 0.9rem;
+        }
+        .timer-meta span {
+                background: rgba(255, 255, 255, 0.05);
+                padding: 0.45rem 0.85rem;
+                border-radius: 999px;
+        }
+        .amrap-exercises {
+                grid-area: exercises;
+                background: var(--bg-panel);
+                border-radius: 1.5rem;
+                border: 1px solid var(--border-color);
+                padding: 1.75rem;
+                display: flex;
+                flex-direction: column;
+                gap: 1rem;
+        }
+        .amrap-exercises__header {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                border-bottom: 1px solid var(--border-color);
+                padding-bottom: 0.75rem;
+        }
+        .amrap-exercises__label {
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.12em;
+                color: var(--text-muted);
+        }
+        .amrap-exercise-list {
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+        }
+        .amrap-exercise-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 1rem;
+                align-items: center;
+                padding: 0.85rem 1rem;
+                background: var(--bg-main);
+                border-radius: 1rem;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .amrap-exercise__name {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                font-weight: 600;
+        }
+        .exercise-pill {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 2rem;
+                height: 2rem;
+                border-radius: 999px;
+                background: rgba(253, 224, 71, 0.2);
+                color: var(--brand-yellow);
+                font-weight: 700;
+        }
+        .amrap-exercise__detail {
+                font-size: 0.95rem;
+                color: var(--text-secondary);
+        }
+        .amrap-sidebar {
+                grid-area: sidebar;
+                display: flex;
+                flex-direction: column;
+                gap: 1.5rem;
+        }
+        .attendee-card,
+        .results-card {
+                background: var(--bg-panel);
+                border-radius: 1.5rem;
+                border: 1px solid var(--border-color);
+                padding: 1.5rem;
+                display: flex;
+                flex-direction: column;
+                gap: 1rem;
+        }
+        .attendee-card header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+        }
+        .badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 999px;
+                padding: 0.35rem 0.75rem;
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                font-weight: 700;
+                background: rgba(253, 224, 71, 0.2);
+                color: var(--brand-yellow);
+        }
+        .badge--count {
+                background: rgba(59, 130, 246, 0.2);
+                color: #93c5fd;
+        }
+        .attendee-card ul {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+        }
+        .attendee-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 110px;
+                gap: 0.75rem;
+                align-items: center;
+                padding: 0.6rem 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .attendee-row:last-child {
+                border-bottom: none;
+                padding-bottom: 0;
+        }
+        .attendee-info {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+        }
+        .attendee-index {
+                width: 1.75rem;
+                height: 1.75rem;
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.08);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.75rem;
+                color: var(--text-secondary);
+        }
+        .attendee-name {
+                font-weight: 600;
+        }
+        .attendee-status {
+                font-size: 0.75rem;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                color: var(--text-muted);
+        }
+        .attendee-row input {
+                width: 100%;
+                border-radius: 10px;
+                border: 1px solid var(--border-color);
+                background: var(--bg-main);
+                color: var(--text-primary);
+                padding: 0.55rem 0.75rem;
+                font-size: 0.95rem;
+        }
+        .results-card .primary {
+                background: var(--brand-green);
+                color: var(--text-primary);
+                border: none;
+                border-radius: 999px;
+                padding: 0.75rem 1.5rem;
+                font-weight: 700;
+                cursor: pointer;
+                align-self: stretch;
+                text-align: center;
+        }
+        .results-card .primary:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+        }
+        .status-message {
+                padding: 0.75rem 1rem;
+                border-radius: 0.75rem;
+                font-size: 0.9rem;
+        }
+        .status-message.success {
+                background: rgba(22, 163, 74, 0.15);
+                color: var(--brand-green);
+        }
+        .status-message.error {
+                background: rgba(239, 68, 68, 0.15);
+                color: #fca5a5;
+        }
+        @media (max-width: 1200px) {
+                .amrap-body {
+                        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                        grid-template-areas: 'timer timer' 'exercises sidebar';
+                }
+                .amrap-sidebar {
+                        flex-direction: row;
+                        gap: 1rem;
+                }
+                .attendee-card,
+                .results-card {
+                        flex: 1 1 0;
+                }
+        }
+        @media (max-width: 900px) {
+                .amrap-body {
+                        grid-template-columns: 1fr;
+                        grid-template-areas: 'timer' 'exercises' 'sidebar';
+                }
+                .amrap-sidebar {
+                        flex-direction: column;
+                }
+                .timer-actions {
+                        flex-direction: column;
+                        align-items: stretch;
+                }
+                .timer-actions button {
+                        width: 100%;
+                }
+        }
+
+        .empty-state {
+                color: var(--text-muted);
+                font-size: 0.9rem;
+                line-height: 1.5;
+        }
+
+        /* --- Circuit Layout Styles --- */
 	.mission-control {
 		display: flex;
 		flex-direction: column;
