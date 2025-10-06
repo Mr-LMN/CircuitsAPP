@@ -60,7 +60,14 @@
 	}
 
 	// --- Session Config & Timer State ---
-	let sessionConfig = { work: 60, swap: 15, move: 15, rounds: 1, totalTime: 600 };
+        let sessionConfig = {
+                work: 60,
+                swap: 15,
+                move: 15,
+                rounds: 1,
+                totalTime: 600,
+                showStationCallout: false
+        };
 	let amrapMinutes = sessionConfig.totalTime / 60;
 	let state = {
 		phase: 'Ready',
@@ -95,17 +102,21 @@
 	}
 	$: movesCompleted =
 		totalStations > 0 ? (state.currentRound - 1) * totalStations + state.currentStation : 0;
-	$: stationRoster = (workout.exercises ?? []).map((_, targetIndex) => {
-		if (!totalStations) return [];
-		const roster = [];
-		stationAssignments.forEach((codes, startIndex) => {
-			if (codes?.length) {
-				const destination = (startIndex + movesCompleted) % totalStations;
-				if (destination === targetIndex) roster.push(...codes);
-			}
-		});
-		return roster;
-	});
+        $: stationRoster = (workout.exercises ?? []).map((_, targetIndex) => {
+                if (!totalStations) return [];
+                const roster = [];
+                stationAssignments.forEach((codes, startIndex) => {
+                        if (codes?.length) {
+                                const destination = (startIndex + movesCompleted) % totalStations;
+                                if (destination === targetIndex) roster.push(...codes);
+                        }
+                });
+                return roster;
+        });
+        $: partnerBadges = stationRoster.map((roster) => ({
+                a: roster?.[0] || 'Partner 1',
+                b: roster?.[1] || 'Partner 2'
+        }));
         $: progress =
                 state.duration > 0
                         ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100))
@@ -115,7 +126,7 @@
         }
         $: activeStation = workout.exercises?.[state.currentStation] ?? null;
         $: partnerCallout =
-                workout.mode === 'Partner'
+                workout.mode === 'Partner' && sessionConfig.showStationCallout
                         ? (() => {
                                   if (!activeStation) return null;
                                   if (state.phase === 'PARTNER A') {
@@ -361,11 +372,23 @@
                                                         />
                                                         <p class="input-hint">Time for partners to trade stations.</p>
                                                 </div>
+                                                <div class="form-group checkbox-group">
+                                                        <label>
+                                                                <input
+                                                                        type="checkbox"
+                                                                        bind:checked={sessionConfig.showStationCallout}
+                                                                />
+                                                                Show station callout under timer
+                                                        </label>
+                                                        <p class="input-hint">
+                                                                Display the active partner task beneath the countdown.
+                                                        </p>
+                                                </div>
                                         {/if}
                                         <div class="form-group">
                                                 <label for="move">Move/Rest (s)</label><input
-							id="move"
-							type="number"
+                                                        id="move"
+                                                        type="number"
 							min="0"
 							bind:value={sessionConfig.move}
 						/>
@@ -451,12 +474,20 @@
 								</header>
                                                                 <div class="station-card__tasks">
                                                                         <div class="task-line">
-                                                                                <span class="task-badge partner-a">Partner A</span>
+                                                                                <span class="task-badge partner-a">
+                                                                                        {workout.mode === 'Partner'
+                                                                                                ? partnerBadges[i]?.a || 'Partner 1'
+                                                                                                : 'Partner A'}
+                                                                                </span>
                                                                                 <span class="task-text">{station.p1_task || station.name}</span>
                                                                         </div>
                                                                         {#if station.p2_task}
                                                                                 <div class="task-line">
-                                                                                        <span class="task-badge partner-b">Partner B</span>
+                                                                                        <span class="task-badge partner-b">
+                                                                                                {workout.mode === 'Partner'
+                                                                                                        ? partnerBadges[i]?.b || 'Partner 2'
+                                                                                                        : 'Partner B'}
+                                                                                        </span>
                                                                                         <span class="task-text">{station.p2_task}</span>
                                                                                 </div>
                                                                         {/if}
@@ -621,6 +652,20 @@
                 border: 1px solid var(--border-color);
                 background: var(--bg-main);
                 color: var(--text-primary);
+        }
+        .checkbox-group {
+                align-self: flex-start;
+        }
+        .checkbox-group label {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 0.85rem;
+                color: var(--text-primary);
+        }
+        .checkbox-group input[type='checkbox'] {
+                width: auto;
+                height: auto;
         }
         .form-group .input-hint {
                 margin-top: 0.35rem;
