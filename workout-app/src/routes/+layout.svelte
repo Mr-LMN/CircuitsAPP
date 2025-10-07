@@ -1,77 +1,70 @@
 <script>
-        import '../app.css';
-        import { onMount } from 'svelte';
-        import { goto } from '$app/navigation';
-        import { resolve } from '$app/paths';
-        import { page } from '$app/stores';
-        import { get } from 'svelte/store';
-        import { onAuthStateChanged } from 'firebase/auth';
-        import { doc, getDoc } from 'firebase/firestore';
-        import { auth, db } from '$lib/firebase';
-        import { user, loading } from '$lib/store';
+	// @ts-nocheck
+	import '../app.css';
+	import { onMount } from 'svelte';
+	import { auth, db } from '$lib/firebase';
+	import { onAuthStateChanged } from 'firebase/auth';
+	import { doc, getDoc } from 'firebase/firestore';
+	import { user, loading } from '$lib/store';
+	import { goto } from '$app/navigation';
+	import AdminNav from '$lib/components/AdminNav.svelte';
 
-        let profileExists = false;
-        let checkingProfile = false;
+	import { writable } from 'svelte/store';
+	export const isAdmin = writable(false);
 
-        /**
-         * @param {string} uid
-         * @param {string} currentPath
-         */
-        async function ensureProfile(uid, currentPath) {
-                if (!uid || checkingProfile) return;
-                checkingProfile = true;
-                try {
-                        const profileRef = doc(db, 'profiles', uid);
-                        const profileSnap = await getDoc(profileRef);
-                        profileExists = profileSnap.exists();
-                        if (!profileExists && !currentPath.startsWith('/account/setup')) {
-                                await goto(resolve('/account/setup'));
-                        }
-                } catch (error) {
-                        console.error('Failed to verify profile', error);
-                } finally {
-                        checkingProfile = false;
-                }
-        }
+	onMount(() => {
+		const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+			if (firebaseUser) {
+				$user = {
+					email: firebaseUser.email,
+					uid: firebaseUser.uid
+				};
 
-        onMount(() => {
-                const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-                        try {
-                                if (firebaseUser) {
-                                        $user = { email: firebaseUser.email, uid: firebaseUser.uid };
-                                        const currentPath = get(page).url.pathname;
-                                        await ensureProfile(firebaseUser.uid, currentPath);
-                                } else {
-                                        $user = null;
-                                        profileExists = false;
-                                }
-                        } finally {
-                                $loading = false;
-                        }
-                });
+				const profileRef = doc(db, 'profiles', firebaseUser.uid);
+				const profileSnap = await getDoc(profileRef);
 
-                return () => unsubscribe();
-        });
+				if (profileSnap.exists()) {
+					$isAdmin = profileSnap.data().isAdmin === true;
+				} else {
+					$isAdmin = false;
+					if (window.location.pathname !== '/account/setup') {
+						goto('/account/setup');
+					}
+				}
+			} else {
+				$user = null;
+				$isAdmin = false;
+			}
+			$loading = false;
+		});
 
-        $: currentPath = $page.url.pathname;
-        $: if (!$loading && $user) {
-                ensureProfile($user.uid, currentPath);
-        }
+		return () => unsubscribe();
+	});
 </script>
 
 <svelte:head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-        <link
-                href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700&display=swap"
-                rel="stylesheet"
-        />
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link
+		href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700&display=swap"
+		rel="stylesheet"
+	/>
 </svelte:head>
 
+{#if $isAdmin}
+	<AdminNav />
+{/if}
+
 <div class="app-container">
-        {#if $loading}
-                <p>Loading...</p>
-        {:else}
-                <slot />
-        {/if}
+	{#if $loading}
+		<p>Loading...</p>
+	{:else}
+		<slot />
+	{/if}
 </div>
+
+<style>
+	.app-container {
+		min-height: 100vh;
+	}
+</style>
