@@ -14,7 +14,10 @@
 	let notes = '';
 
 	// This will now hold different shaped objects based on the 'mode'
-        let exercises = [{ name: '', description: '' }];
+        const categoryOptions = ['Cardio Machine', 'Resistance', 'Bodyweight'];
+        const defaultCategory = categoryOptions[0];
+
+        let exercises = [{ name: '', description: '', category: defaultCategory }];
         let structureMode = mode;
 
         function normalizeStarter(value) {
@@ -26,7 +29,8 @@
                         name: exercise.name || `Station ${index + 1}`,
                         p1_task: exercise.p1_task ?? exercise.description ?? '',
                         p2_task: exercise.p2_task ?? '',
-                        startsWith: normalizeStarter(exercise.startsWith ?? exercise.starter)
+                        startsWith: normalizeStarter(exercise.startsWith ?? exercise.starter),
+                        category: exercise.category ?? defaultCategory
                 }));
         }
 
@@ -35,7 +39,8 @@
                         name: exercise.name ?? '',
                         description:
                                 exercise.description ??
-                                [exercise.p1_task, exercise.p2_task].filter(Boolean).join(' / ')
+                                [exercise.p1_task, exercise.p2_task].filter(Boolean).join(' / '),
+                        category: exercise.category ?? defaultCategory
                 }));
         }
 
@@ -65,10 +70,14 @@
                                                   name: `Station ${exercises.length + 1}`,
                                                   p1_task: '',
                                                   p2_task: '',
-                                                  startsWith: 'P1'
+                                                  startsWith: 'P1',
+                                                  category: defaultCategory
                                           }
                                   ]
-                                : [...exercises, { name: '', description: '' }];
+                                : [
+                                          ...exercises,
+                                          { name: '', description: '', category: defaultCategory }
+                                  ];
         }
 
         function removeExercise(index) {
@@ -103,11 +112,13 @@
                                                   name: exercise.name || `Station ${index + 1}`,
                                                   p1_task: exercise.p1_task,
                                                   p2_task: exercise.p2_task,
-                                                  startsWith: normalizeStarter(exercise.startsWith)
+                                                  startsWith: normalizeStarter(exercise.startsWith),
+                                                  category: exercise.category ?? defaultCategory
                                           }))
                                         : exercises.map((exercise) => ({
                                                   name: exercise.name,
-                                                  description: exercise.description
+                                                  description: exercise.description,
+                                                  category: exercise.category ?? defaultCategory
                                           }));
 
                         const workoutData = {
@@ -212,6 +223,15 @@
                                                         placeholder="Station #{i + 1} Name"
                                                         required
                                                 />
+                                                <select
+                                                        class="category-select"
+                                                        bind:value={exercise.category}
+                                                        aria-label="Exercise category"
+                                                >
+                                                        {#each categoryOptions as option}
+                                                                <option value={option}>{option}</option>
+                                                        {/each}
+                                                </select>
                                                 <div class="partner-tasks">
                                                         <label class="task-label" for={`partner-a-${i}`}>
                                                                 Partner A Task
@@ -267,20 +287,29 @@
                                         </div>
                                 {/each}
                         {:else}
-				{#each exercises as exercise, i (i)}
-					<div class="exercise-item">
-						<input
-							type="text"
-							bind:value={exercise.name}
-							placeholder="Exercise #{i + 1} Name"
-							required
-							list="exercise-suggestions"
-						/>
-						<input
-							type="text"
-							bind:value={exercise.description}
-							placeholder="Description (e.g., 12 reps, 45s)"
-						/>
+                                {#each exercises as exercise, i (i)}
+                                        <div class="exercise-item">
+                                                <input
+                                                        type="text"
+                                                        bind:value={exercise.name}
+                                                        placeholder="Exercise #{i + 1} Name"
+                                                        required
+                                                        list="exercise-suggestions"
+                                                />
+                                                <select
+                                                        class="category-select"
+                                                        bind:value={exercise.category}
+                                                        aria-label="Exercise category"
+                                                >
+                                                        {#each categoryOptions as option}
+                                                                <option value={option}>{option}</option>
+                                                        {/each}
+                                                </select>
+                                                <input
+                                                        type="text"
+                                                        bind:value={exercise.description}
+                                                        placeholder="Description (e.g., 12 reps, 45s)"
+                                                />
 						<button type="button" class="remove-btn" on:click={() => removeExercise(i)}
 							>&times;</button
 						>
@@ -363,12 +392,15 @@
 		align-items: center;
 		margin-bottom: 0.75rem;
 	}
-	.exercise-item input:first-child {
-		flex: 3;
-	}
-	.exercise-item input:last-of-type {
-		flex: 2;
-	}
+        .exercise-item input:first-child {
+                flex: 3;
+        }
+        .exercise-item .category-select {
+                flex: 2;
+        }
+        .exercise-item input:last-of-type {
+                flex: 2;
+        }
 	.remove-btn {
 		background: none;
 		border: 1px solid var(--error);

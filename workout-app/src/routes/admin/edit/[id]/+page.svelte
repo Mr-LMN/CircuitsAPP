@@ -10,14 +10,20 @@
 	// The 'workout' object comes directly from our +page.js file.
 	export let data;
 
-	// Pre-fill all our form variables with the loaded data.
-	let title = data.workout.title;
-	let type = data.workout.type;
-	let mode = data.workout.mode;
-	let isBenchmark = data.workout.isBenchmark;
-	let notes = data.workout.notes;
-	// We deep-copy the exercises array to avoid weird reactivity issues.
-        let exercises = JSON.parse(JSON.stringify(data.workout.exercises));
+        const categoryOptions = ['Cardio Machine', 'Resistance', 'Bodyweight'];
+        const defaultCategory = categoryOptions[0];
+
+        // Pre-fill all our form variables with the loaded data.
+        let title = data.workout.title;
+        let type = data.workout.type;
+        let mode = data.workout.mode;
+        let isBenchmark = data.workout.isBenchmark;
+        let notes = data.workout.notes;
+        // We deep-copy the exercises array to avoid weird reactivity issues.
+        let exercises = JSON.parse(JSON.stringify(data.workout.exercises)).map((exercise) => ({
+                ...exercise,
+                category: exercise.category ?? defaultCategory
+        }));
         let structureMode = mode;
 
         function normalizeStarter(value) {
@@ -29,7 +35,8 @@
                         name: exercise.name || `Station ${index + 1}`,
                         p1_task: exercise.p1_task ?? exercise.description ?? '',
                         p2_task: exercise.p2_task ?? '',
-                        startsWith: normalizeStarter(exercise.startsWith ?? exercise.starter)
+                        startsWith: normalizeStarter(exercise.startsWith ?? exercise.starter),
+                        category: exercise.category ?? defaultCategory
                 }));
         }
 
@@ -38,7 +45,8 @@
                         name: exercise.name ?? '',
                         description:
                                 exercise.description ??
-                                [exercise.p1_task, exercise.p2_task].filter(Boolean).join(' / ')
+                                [exercise.p1_task, exercise.p2_task].filter(Boolean).join(' / '),
+                        category: exercise.category ?? defaultCategory
                 }));
         }
 
@@ -66,10 +74,14 @@
                                                   name: `Station ${exercises.length + 1}`,
                                                   p1_task: '',
                                                   p2_task: '',
-                                                  startsWith: 'P1'
+                                                  startsWith: 'P1',
+                                                  category: defaultCategory
                                           }
                                   ]
-                                : [...exercises, { name: '', description: '' }];
+                                : [
+                                          ...exercises,
+                                          { name: '', description: '', category: defaultCategory }
+                                  ];
         }
 
         function removeExercise(index) {
@@ -86,7 +98,7 @@
         async function updateWorkout() {
                 const isInvalid =
                         mode === 'Partner'
-                                ? exercises.some((ex) => !ex.name || !ex.p1_task || !ex.p2_task)
+                                        ? exercises.some((ex) => !ex.name || !ex.p1_task || !ex.p2_task)
                                 : exercises.some((ex) => !ex.name);
 
                 if (!title || isInvalid) {
@@ -109,11 +121,13 @@
                                                   name: exercise.name || `Station ${index + 1}`,
                                                   p1_task: exercise.p1_task,
                                                   p2_task: exercise.p2_task,
-                                                  startsWith: normalizeStarter(exercise.startsWith)
+                                                  startsWith: normalizeStarter(exercise.startsWith),
+                                                  category: exercise.category ?? defaultCategory
                                           }))
                                         : exercises.map((exercise) => ({
                                                   name: exercise.name,
-                                                  description: exercise.description
+                                                  description: exercise.description,
+                                                  category: exercise.category ?? defaultCategory
                                           }));
 
                         const updatedData = {
@@ -214,6 +228,15 @@
                                                         placeholder="Station #{i + 1} Name"
                                                         required
                                                 />
+                                                <select
+                                                        class="category-select"
+                                                        bind:value={exercise.category}
+                                                        aria-label="Exercise category"
+                                                >
+                                                        {#each categoryOptions as option}
+                                                                <option value={option}>{option}</option>
+                                                        {/each}
+                                                </select>
                                                 <div class="partner-tasks">
                                                         <label class="task-label" for={`partner-a-${i}`}>
                                                                 Partner A Task
@@ -278,6 +301,15 @@
                                                         required
                                                         list="exercise-suggestions"
                                                 />
+                                                <select
+                                                        class="category-select"
+                                                        bind:value={exercise.category}
+                                                        aria-label="Exercise category"
+                                                >
+                                                        {#each categoryOptions as option}
+                                                                <option value={option}>{option}</option>
+                                                        {/each}
+                                                </select>
                                                 <input
                                                         type="text"
                                                         bind:value={exercise.description}
@@ -365,12 +397,15 @@
 		align-items: center;
 		margin-bottom: 0.75rem;
 	}
-	.exercise-item input:first-child {
-		flex: 3;
-	}
-	.exercise-item input:last-of-type {
-		flex: 2;
-	}
+        .exercise-item input:first-child {
+                flex: 3;
+        }
+        .exercise-item .category-select {
+                flex: 2;
+        }
+        .exercise-item input:last-of-type {
+                flex: 2;
+        }
 	.remove-btn {
 		background: none;
 		border: 1px solid var(--error);
