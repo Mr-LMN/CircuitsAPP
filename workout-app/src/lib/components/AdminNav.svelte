@@ -33,71 +33,73 @@
 <style>
 	.admin-nav {
 		position: fixed;
-		top: 1rem;
-		left: 1rem;
-		z-index: 2000;
+		top: 1.5rem;
+		left: 1.5rem;
+		z-index: 50; /* Ensures the button is on top of page content */
 	}
-
 	.hamburger {
-		background: rgba(31, 41, 55, 0.7);
+		background: rgba(31, 41, 55, 0.7); /* Semi-transparent background */
 		border: 1px solid var(--border-color);
 		border-radius: 50%;
 		width: 48px;
 		height: 48px;
 		color: var(--text-secondary);
 		cursor: pointer;
-		backdrop-filter: blur(8px);
+		backdrop-filter: blur(8px); /* Frosted glass effect */
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		transition: background-color 0.2s ease;
 	}
-
+	.hamburger:hover {
+		background: rgba(55, 65, 81, 0.8);
+	}
 	.hamburger svg {
 		width: 24px;
 		height: 24px;
 	}
-
 	.menu-overlay {
 		position: fixed;
 		inset: 0;
+		z-index: 48; /* Below the menu, above the page */
 	}
-
 	.menu {
 		position: absolute;
 		top: 60px;
 		left: 0;
-		background: var(--surface-1);
+		background: var(--surface-1); /* This provides the solid background */
 		border: 1px solid var(--border-color);
 		border-radius: 12px;
 		padding: 1rem;
-		width: 250px;
+		width: 280px;
 		box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+		z-index: 49; /* Ensures menu is on top of the overlay */
 	}
-
 	.menu h3 {
 		font-family: var(--font-display);
 		font-size: 1.25rem;
 		letter-spacing: 1px;
-		margin: 0 0 1rem 0;
-		padding-bottom: 0.5rem;
+		margin: 0 0.5rem 1rem 0.5rem;
+		padding-bottom: 0.75rem;
 		border-bottom: 1px solid var(--border-color);
 		color: var(--brand-yellow);
 	}
-
 	.menu ul {
 		list-style: none;
 		padding: 0;
 		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
 	}
-
 	.menu a {
 		display: block;
-		padding: 0.75rem 0.5rem;
+		padding: 0.75rem 1rem;
 		text-decoration: none;
 		color: var(--text-secondary);
-		border-radius: 6px;
+		border-radius: 8px;
+		font-weight: 600;
 	}
-
 	.menu a:hover {
 		background: var(--surface-2);
 		color: var(--text-primary);
