@@ -1,15 +1,26 @@
 <script>
 	// @ts-nocheck
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { db, auth } from '$lib/firebase';
-	import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, deleteDoc } from 'firebase/firestore';
+	import {
+		collection,
+		getDocs,
+		addDoc,
+		serverTimestamp,
+		query,
+		orderBy,
+		where,
+		doc,
+		deleteDoc,
+		onSnapshot
+	} from 'firebase/firestore';
 
 	let allWorkouts = [];
 	let sessions = [];
-	
 	let newSession = { date: '', workoutId: '' };
 	let isLoading = true;
 	let isSubmitting = false;
+	let unsubscribeSessions = () => {};
 
 	function formatDate(date) {
 		if (!date) return null;
@@ -24,18 +35,26 @@
 		const user = auth.currentUser;
 		if (!user) return;
 
+		// Fetch workouts for the dropdown (this only needs to happen once)
 		const workoutsQuery = query(collection(db, 'workouts'), where('creatorId', '==', user.uid));
-		const sessionsQuery = query(collection(db, 'sessions'), where('creatorId', '==', user.uid), orderBy('sessionDate', 'desc'));
-
-		const [workoutsSnapshot, sessionsSnapshot] = await Promise.all([
-			getDocs(workoutsQuery),
-			getDocs(sessionsQuery)
-		]);
-
+		const workoutsSnapshot = await getDocs(workoutsQuery);
 		allWorkouts = workoutsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-		sessions = sessionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-		
-		isLoading = false;
+
+		// NEW: Set up a real-time listener for sessions
+		const sessionsQuery = query(
+			collection(db, 'sessions'),
+			where('creatorId', '==', user.uid),
+			orderBy('sessionDate', 'desc')
+		);
+		unsubscribeSessions = onSnapshot(sessionsQuery, snapshot => {
+			sessions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+			isLoading = false;
+		});
+	});
+
+	// Clean up the listener when the page is left
+	onDestroy(() => {
+		unsubscribeSessions();
 	});
 
 	async function createSession() {
@@ -55,31 +74,24 @@
 				rsvps: [],
 				createdAt: serverTimestamp()
 			};
-			const docRef = await addDoc(collection(db, 'sessions'), sessionData);
-			sessions = [{ id: docRef.id, ...sessionData }, ...sessions];
+			await addDoc(collection(db, 'sessions'), sessionData);
 			newSession = { date: '', workoutId: '' };
 		} catch (error) {
-			console.error("Error creating session:", error);
+			console.error('Error creating session:', error);
 			alert('Failed to create session.');
 		} finally {
 			isSubmitting = false;
 		}
 	}
 
-	// --- NEW: Function to delete a session ---
-	async function deleteSession(sessionId, index) {
-		if (!confirm('Are you sure you want to delete this session? This cannot be undone.')) {
-			return;
-		}
+	async function deleteSession(sessionId) {
+		if (!confirm('Are you sure you want to delete this session?')) return;
 		try {
-			// Delete the document from Firestore
 			await deleteDoc(doc(db, 'sessions', sessionId));
-			// Remove the session from our local list to update the UI instantly
-			sessions.splice(index, 1);
-			sessions = sessions; // This triggers Svelte to re-render the list
+			// The onSnapshot listener will automatically remove it from the UI
 		} catch (error) {
-			console.error("Error deleting session:", error);
-			alert('Failed to delete session. Please try again.');
+			console.error('Error deleting session:', error);
+			alert('Failed to delete session.');
 		}
 	}
 </script>
@@ -120,7 +132,7 @@
 			<p class="empty-state">You haven't created any sessions yet.</p>
 		{:else}
 			<div class="sessions-grid">
-				{#each sessions as session, i}
+				{#each sessions as session}
 					{@const displayDate = formatDate(session.sessionDate)}
 					<div class="session-card">
 						<div class="session-header">
@@ -132,7 +144,7 @@
 									<span>Invalid Date</span>
 								{/if}
 							</div>
-							<button class="delete-btn" on:click={() => deleteSession(session.id, i)}>&times;</button>
+							<button class="delete-btn" on:click={() => deleteSession(session.id)}>&times;</button>
 						</div>
 						<div class="session-details">
 							<h3>{session.workoutTitle}</h3>
