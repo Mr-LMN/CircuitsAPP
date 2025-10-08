@@ -116,19 +116,26 @@ broadcastState();
 state = state;
 }
 async function startTimer() {
-if (state.isComplete || state.isRunning || totalStations === 0) return;
-if (state.phaseIndex === -1) { advancePhase(); }
-state.isRunning = true;
-timerId = setInterval(tick, 100);
-commitAllAssignments();
-broadcastState();
-if (sessionId) {
-try {
-await updateDoc(doc(db, 'sessions', sessionId), { stationAssignments });
-} catch (error) {
-console.error('Failed to save station assignments', error);
-}
-}
+    if (state.isComplete || state.isRunning || totalStations === 0) return;
+
+    if (sessionId && state.phaseIndex === -1) {
+        const sessionRef = doc(db, 'sessions', sessionId);
+        await updateDoc(sessionRef, {
+            stationAssignments: stationAssignments
+        });
+    }
+    if (state.phaseIndex === -1) { advancePhase(); }
+    state.isRunning = true;
+    timerId = setInterval(tick, 100);
+    commitAllAssignments();
+    broadcastState();
+    if (sessionId) {
+        try {
+            await updateDoc(doc(db, 'sessions', sessionId), { stationAssignments });
+        } catch (error) {
+            console.error('Failed to save station assignments', error);
+        }
+    }
 }
 function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); broadcastState(); }
 function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; broadcastState(); }
