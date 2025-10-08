@@ -17,7 +17,7 @@ export async function load({ params, url }) {
                 return {
                         workout,
                         sessionId: params.id,
-                        url: { host: url.host }
+                        url: { origin: url.origin }
                 };
 	} else {
 		throw error(404, 'Workout not found');
