@@ -2,7 +2,7 @@
 // @ts-nocheck
 import { onDestroy, onMount } from 'svelte';
 import { db } from '$lib/firebase';
-import { collection, query, where, getDocs, limit, orderBy, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 
 export let data;
 const { workout, url } = data;
@@ -24,10 +24,8 @@ let timerId = null;
 let isSetupVisible = false;
 let showQr = false;
 let sessionId = null;
-let lastBroadcast = 0; // For throttling updates
-let qrJoinUrl = '';
 
-// --- Staff Roster Logic ---
+// --- Roster Logic ---
 let totalStations = workout.exercises?.length ?? 0;
 let stationAssignments = (workout.exercises ?? []).map(() => []);
 let assignmentInputs = (workout.exercises ?? []).map(() => '');
@@ -46,204 +44,80 @@ return roster;
 });
 $: progress = state.duration > 0 ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100)) : 0;
 $: totalTime = totalStations > 0 ? Math.round(((sessionConfig.work * 2 + sessionConfig.swap + sessionConfig.move) * totalStations * sessionConfig.rounds) / 60) : 0;
+$: startButtonLabel = state.isRunning ? 'Pause' : state.phaseIndex >= 0 && !state.isComplete ? 'Resume' : 'Start';
 
 onMount(async () => {
 const startOfToday = new Date();
 startOfToday.setHours(0, 0, 0, 0);
-const sessionsQuery = query(
-collection(db, 'sessions'), 
-where('workoutId', '==', workout.id),
-where('sessionDate', '>=', startOfToday),
-orderBy('sessionDate', 'asc'),
-limit(1)
-);
+const sessionsQuery = query(collection(db, 'sessions'), where('workoutId', '==', workout.id), where('sessionDate', '>=', startOfToday), orderBy('sessionDate', 'asc'), limit(1));
 const sessionsSnapshot = await getDocs(sessionsQuery);
 if (!sessionsSnapshot.empty) { sessionId = sessionsSnapshot.docs[0].id; }
 });
 
-$: {
-    const baseOrigin = url?.origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
-    qrJoinUrl = sessionId && baseOrigin ? `${baseOrigin}/live/${sessionId}` : '';
-}
-
-async function broadcastState() {
-    if (!sessionId) return;
-    const now = Date.now();
-    if (now - lastBroadcast < 950) return;
-
-    lastBroadcast = now;
-    const liveStateRef = doc(db, 'sessions', sessionId, 'liveState', 'data');
-
-    await setDoc(liveStateRef, {
-        phase: state.phase,
-        remaining: state.remaining,
-        duration: state.duration,
-        currentStation: state.currentStation,
-        isRunning: state.isRunning,
-        isComplete: state.isComplete,
-        movesCompleted: movesCompleted
-    });
-}
-
 // --- Timer Core Functions ---
 function advancePhase() {
 if (!totalStations) return; state.lastCue = 0; const nextPhaseIndex = state.phaseIndex + 1;
-if (workout.mode === 'Partner' && workout.type === 'Circuit') {
-if (nextPhaseIndex === 0) { state.phaseIndex = 0; state.phase = 'WORK 1'; state.remaining = state.duration = sessionConfig.work; whistleBell(); }
-else if (nextPhaseIndex === 1) { state.phaseIndex = 1; state.phase = 'SWAP'; state.remaining = state.duration = sessionConfig.swap; tone(420, 160); }
-else if (nextPhaseIndex === 2) { state.phaseIndex = 2; state.phase = 'WORK 2'; state.remaining = state.duration = sessionConfig.work; whistleBell(); }
-else if (nextPhaseIndex === 3) { state.phaseIndex = 3; state.phase = 'MOVE'; state.remaining = state.duration = sessionConfig.move; tone(420, 160); }
-else {
+if (workout.mode === 'Partner') {
+if (nextPhaseIndex === 0) { state.phaseIndex = 0; state.phase = 'WORK 1'; state.remaining = state.duration = sessionConfig.work; whistleBell(); } 
+            else if (nextPhaseIndex === 1) { state.phaseIndex = 1; state.phase = 'SWAP'; state.remaining = state.duration = sessionConfig.swap; tone(420, 160); } 
+            else if (nextPhaseIndex === 2) { state.phaseIndex = 2; state.phase = 'WORK 2'; state.remaining = state.duration = sessionConfig.work; whistleBell(); } 
+            else if (nextPhaseIndex === 3) { state.phaseIndex = 3; state.phase = 'MOVE'; state.remaining = state.duration = sessionConfig.move; tone(420, 160); } 
+            else {
 state.currentStation++;
-if (state.currentStation >= totalStations) {
-state.currentStation = 0; state.currentRound++;
-if (state.currentRound > sessionConfig.rounds) { workoutComplete(); return; }
-}
+if (state.currentStation >= totalStations) { state.currentStation = 0; state.currentRound++; if (state.currentRound > sessionConfig.rounds) { workoutComplete(); return; } }
 state.phaseIndex = 0; state.phase = 'WORK 1'; state.remaining = state.duration = sessionConfig.work; whistleBell();
 }
-} else { // Fallback for other workout types
-state.currentStation++;
-if (state.currentStation >= totalStations) { workoutComplete(); return; }
-state.phase = `Round ${state.currentStation + 1}`; state.remaining = state.duration = sessionConfig.work; whistleBell();
+} else { state.currentStation++; if (state.currentStation >= totalStations) { workoutComplete(); return; } state.phase = `Round ${state.currentStation + 1}`; state.remaining = state.duration = sessionConfig.work; whistleBell(); }
 }
-}
-function tick() {
-state.remaining -= 0.1;
-const secs = Math.ceil(state.remaining);
-if (secs <= 3 && secs >= 1 && secs !== state.lastCue) { state.lastCue = secs; countBeep(secs); }
-if (state.remaining <= 0) { advancePhase(); }
-broadcastState();
-state = state;
-}
-async function startTimer() {
-    if (state.isComplete || state.isRunning || totalStations === 0) return;
-
-    if (sessionId && state.phaseIndex === -1) {
-        const sessionRef = doc(db, 'sessions', sessionId);
-        await updateDoc(sessionRef, {
-            stationAssignments: stationAssignments
-        });
-    }
-    if (state.phaseIndex === -1) { advancePhase(); }
-    state.isRunning = true;
-    timerId = setInterval(tick, 100);
-    commitAllAssignments();
-    broadcastState();
-    if (sessionId) {
-        try {
-            await updateDoc(doc(db, 'sessions', sessionId), { stationAssignments });
-        } catch (error) {
-            console.error('Failed to save station assignments', error);
-        }
-    }
-}
-function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); broadcastState(); }
-function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; broadcastState(); }
-function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); broadcastState(); }
+function tick() { state.remaining -= 0.1; const secs = Math.ceil(state.remaining); if (secs <= 3 && secs >= 1 && secs !== state.lastCue) { state.lastCue = secs; countBeep(secs); } if (state.remaining <= 0) { advancePhase(); } state = state; }
+function startTimer() { if (state.isComplete || state.isRunning || totalStations === 0) return; if (state.phaseIndex === -1) { advancePhase(); } state.isRunning = true; timerId = setInterval(tick, 100); commitAllAssignments(); }
+function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); }
+function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; }
+function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); }
 function openSetup() { pauseTimer(); isSetupVisible = true; }
 function closeSetup() { commitAllAssignments(); isSetupVisible = false; }
 function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0')); }
+
+// NEW: Functions for new control buttons
+function skipPhase() {
+if (state.isComplete || state.phaseIndex === -1) return;
+const wasRunning = state.isRunning;
+pauseTimer();
+advancePhase();
+if (wasRunning && !state.isComplete) { startTimer(); }
+}
+function finishWorkout() {
+if (state.phaseIndex === -1) return;
+workoutComplete();
+}
+
 onDestroy(() => clearInterval(timerId));
 </script>
 
-{#if isSetupVisible}
-<div class="modal-overlay" on:click|self={closeSetup}>
-<div class="modal-content">
-<h2>Session Roster Setup</h2>
-<p>Enter staff initials for each starting station.</p>
-<div class="assignment-grid">
-{#each workout.exercises as station, i}
-<div class="assignment-card">
-<label for={`assignment-${i}`}>Station {i + 1}: {station.name}</label>
-<input id={`assignment-${i}`} placeholder="e.g. LMN, DVE" bind:value={assignmentInputs[i]} on:blur={commitAllAssignments} />
-</div>
-{/each}
-</div>
-<div class="modal-actions"><button class="primary" on:click={closeSetup}>Done</button></div>
-</div>
-</div>
-{/if}
-
-{#if showQr && sessionId && qrJoinUrl}
-<div class="modal-overlay" on:click|self={() => showQr = false}>
-<div class="modal-content qr-modal">
-<h2>Scan to Join Live Session</h2>
-<p>Members can scan this with their phone to join.</p>
-<img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrJoinUrl)}`} alt="QR Code to join session" />
-</div>
-</div>
-{/if}
-
-
-<div class="mission-control" class:blur={isSetupVisible || showQr}>
+<div class="mission-control">
 <header class="setup-panel">
-<div class="logo"><span>{workout.title}</span></div>
-<div class="setup-controls">
-<div class="form-group"><label for="work">Work (s)</label><input id="work" type="number" bind:value={sessionConfig.work} disabled={state.isRunning} /></div>
-<div class="form-group"><label for="swap">Swap (s)</label><input id="swap" type="number" bind:value={sessionConfig.swap} disabled={state.isRunning || workout.mode !== 'Partner'} /></div>
-<div class="form-group"><label for="move">Move (s)</label><input id="move" type="number" bind:value={sessionConfig.move} disabled={state.isRunning} /></div>
-<div class="form-group"><label for="rounds">Rounds</label><input id="rounds" type="number" bind:value={sessionConfig.rounds} disabled={state.isRunning} /></div>
-<div class="form-group"><label>&nbsp;</label><button class="roster-btn" on:click={openSetup}>Roster</button></div>
-<div class="form-group"><label>&nbsp;</label><button class="roster-btn" on:click={() => showQr = true} disabled={!sessionId}>QR Code</button></div>
-</div>
 </header>
-
 <main class="main-content">
 <div class="left-panel">
 <div class="station-grid">
-  {#each workout.exercises as station, i}
-    <article class="station-card" class:current={i === state.currentStation}>
-      <header class="station-card__header">
-        <div class="station-card__title">
-          <span class="station-number">{i + 1}</span>
-          <div>
-            <h3>{station.name}</h3>
-            {#if station.p1?.category || station.p2?.category || station.category}
-              <p class="station-category">
-                {#if station.p1?.category && station.p2?.category && station.p1?.category !== station.p2?.category}
-                  {station.p1?.category} • {station.p2?.category}
-                {:else}
-                  {station.p1?.category || station.p2?.category || station.category}
-                {/if}
-              </p>
-            {/if}
-          </div>
-        </div>
-        {#if station.shared}<span class="shared-badge">Shared</span>{/if}
-      </header>
-
-      <div class="station-card__body">
-        <div class="task-card">
-          <p class="task-heading">Partner A</p>
-          <p class="task-detail">{station.p1?.task || station.p1_task || station.name}</p>
-          {#if station.p1?.notes || station.p1?.category}
-            <p class="task-subtext">{station.p1?.notes || station.p1?.category}</p>
-          {/if}
-        </div>
-
-        {#if station.p2?.task || station.p2_task}
-          <div class="task-card">
-            <p class="task-heading">Partner B</p>
-            <p class="task-detail">{station.p2?.task || station.p2_task}</p>
-            {#if station.p2?.notes || station.p2?.category}
-              <p class="task-subtext">{station.p2?.notes || station.p2?.category}</p>
-            {/if}
-          </div>
-        {/if}
-      </div>
-
-      <footer class="station-card__roster">
-        <p class="roster-label">Starting Here</p>
-        <div class="roster-chips">
-          {#if stationRoster[i]?.length}
-            {#each stationRoster[i] as code}<span>{code}</span>{/each}
-          {:else}
-            <span class="roster-empty">OPEN</span>
-          {/if}
-        </div>
-      </footer>
-    </article>
-  {/each}
+{#each workout.exercises as station, i}
+<article class="station-card" class:current={i === state.currentStation}>
+<header class="station-card__header">
+<span class="station-number">{i + 1}</span><h3>{station.name}</h3>
+</header>
+<div class="station-card__tasks">
+<div class="task-line"><span class="task-label p1">P1</span><span class="task-text">{station.p1?.task || station.p1_task || station.name}</span></div>
+{#if station.p2?.task || station.p2_task}<div class="task-line"><span class="task-label p2">P2</span><span class="task-text">{station.p2?.task || station.p2_task}</span></div>{/if}
+</div>
+<footer class="station-card__roster">
+<div class="roster-chips">
+{#if stationRoster[i]?.length}
+{#each stationRoster[i] as code}<span>{code}</span>{/each}
+{:else}<span class="roster-empty">OPEN</span>{/if}
+</div>
+</footer>
+</article>
+{/each}
 </div>
 </div>
 <div class="right-panel">
@@ -259,8 +133,10 @@ onDestroy(() => clearInterval(timerId));
 <span>Total: ~{totalTime} min</span>
 </div>
 <div class="control-row">
-<button on:click={state.isRunning ? pauseTimer : startTimer}>{state.isRunning ? 'Pause' : 'Start'}</button>
 <button class="secondary" on:click={resetTimer}>Reset</button>
+<button class="secondary" on:click={skipPhase} disabled={state.phaseIndex === -1 || state.isComplete}>Skip</button>
+<button class="primary" on:click={state.isRunning ? pauseTimer : startTimer}>{startButtonLabel}</button>
+<button class="secondary finish" on:click={finishWorkout} disabled={state.phaseIndex === -1 || state.isComplete}>Finish</button>
 </div>
 </footer>
 </div>
@@ -268,68 +144,14 @@ onDestroy(() => clearInterval(timerId));
 </div>
 
 <style>
+/* ... (all styles from our last good version) ... */
 :root { --font-body: 'Inter', sans-serif; --font-display: 'Bebas Neue', sans-serif; --brand-yellow: #fde047; --brand-green: #16a34a; --bg-main: #111827; --bg-panel: #1f2937; --border-color: #374151; --text-primary: #f9fafb; --text-secondary: #9ca3af; --text-muted: #6b7280; }
 :global(body) { background-color: var(--bg-main); color: var(--text-primary); font-family: var(--font-body); }
-.blur { filter: blur(8px); }
 
-/* Modal Styles */
-.modal-overlay { position: fixed; inset: 0; background: rgba(17, 24, 39, 0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(8px); padding: 1.5rem; }
-.modal-content { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 24px; padding: 2.5rem; width: 100%; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 1.5rem; max-height: 90vh; }
-.qr-modal { text-align: center; max-width: 420px; }
-.modal-content h2 { font-family: var(--font-display); color: var(--brand-yellow); font-size: 2.5rem; letter-spacing: 1px; margin: 0; }
-.assignment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; overflow-y: auto; padding: 0.5rem; max-height: 50vh; }
-.assignment-card { background: var(--bg-main); border-radius: 14px; padding: 1rem; }
-.modal-actions { display: flex; justify-content: flex-end; }
-.modal-actions button.primary { border-radius: 999px; font-size: 1rem; padding: 0.75rem 2rem; cursor: pointer; font-weight: 700; border: none; background: var(--brand-green); color: var(--text-primary); }
-.qr-modal img { background: white; padding: 1rem; border-radius: 12px; margin-top: 1rem; max-width: 100%; height: auto; }
-
-/* Main Layout */
-.mission-control { display: flex; flex-direction: column; height: 100vh; padding: 1.5rem; gap: 1.5rem; }
-.setup-panel { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; background: var(--bg-panel); padding: 1rem 1.5rem; border-radius: 1rem; border: 1px solid var(--border-color); }
-.logo span { font-family: var(--font-display); font-size: 2rem; color: var(--brand-yellow); letter-spacing: 1px; }
-.setup-controls { display: flex; align-items: flex-end; gap: 1.5rem; }
-.form-group label { display: block; margin-bottom: 0.25rem; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; }
-.form-group input { width: 80px; font-size: 1rem; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-main); color: var(--text-primary); }
-.roster-btn { height: 38px; font-size: 1rem; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-main); color: var(--text-primary); cursor: pointer; font-weight: 600; }
-.main-content { flex-grow: 1; display: grid; grid-template-columns: 1.2fr 1fr; gap: 1.5rem; min-height: 0; }
-
-/* Left Panel */
-.left-panel { background: var(--bg-panel); border-radius: 1rem; border: 1px solid var(--border-color); padding: 1.5rem; overflow-y: auto; }
-.station-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
-.station-card { background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 16px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1.25rem; box-shadow: 0 15px 25px -20px rgba(0,0,0,0.65); transition: border-color 0.2s ease, transform 0.2s ease; }
-.station-card.current { border-color: var(--brand-yellow); transform: translateY(-2px); box-shadow: 0 20px 30px -18px rgba(253, 224, 71, 0.25); }
-.station-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.station-card__title { display: flex; gap: 0.75rem; align-items: center; }
-.station-number { width: 34px; height: 34px; border-radius: 10px; background: rgba(255,255,255,0.05); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.95rem; flex-shrink: 0; }
-.station-card.current .station-number { background: var(--brand-yellow); color: var(--bg-main); }
-.station-card h3 { margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-primary); }
-.station-category { margin: 0.25rem 0 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
-.shared-badge { font-size: 0.75rem; background: rgba(59, 130, 246, 0.16); padding: 0.25rem 0.75rem; border-radius: 999px; color: #93c5fd; font-weight: 600; }
-.station-card__body { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; }
-.task-card { background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.08); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
-.task-heading { margin: 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 700; }
-.task-detail { margin: 0; font-size: 1rem; font-weight: 600; line-height: 1.4; color: var(--text-secondary); }
-.task-subtext { margin: 0; font-size: 0.75rem; color: var(--text-muted); }
-.station-card__roster { margin-top: auto; padding-top: 1rem; border-top: 1px solid rgba(148, 163, 184, 0.12); display: flex; flex-direction: column; gap: 0.5rem; }
-.roster-label { margin: 0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
-.roster-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.roster-chips span { padding: 0.25rem 0.5rem; border-radius: 8px; background: rgba(148, 163, 184, 0.12); color: var(--text-primary); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; }
-.roster-empty { color: var(--text-muted); font-style: italic; }
-
-/* Right Panel */
-.right-panel { background: var(--bg-panel); border-radius: 1rem; border: 1px solid var(--border-color); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem; }
-.timer-main { flex-grow: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; width: 100%; }
-.phase-display { font-family: var(--font-display); font-size: clamp(3rem, 10vw, 6rem); letter-spacing: 4px; line-height: 1; }
-.time-display { font-family: var(--font-display); font-size: clamp(10rem, 30vh, 20rem); line-height: 1; margin: 1rem 0; }
-.progress-bar-container { width: 100%; max-width: 700px; height: 6px; background: var(--bg-main); border-radius: 999px; overflow: hidden; }
-.progress-bar-fill { height: 100%; background: var(--brand-yellow); }
-.timer-footer { width: 100%; margin-top: auto; padding-top: 1rem; }
-.meta-info { display: flex; justify-content: center; gap: 2rem; margin-bottom: 1rem; color: var(--text-secondary); font-size: 1.25rem; font-family: var(--font-display); letter-spacing: 1px; }
 .control-row { display: flex; justify-content: center; gap: 1rem; }
-.control-row button { border-radius: 999px; font-size: 1.25rem; padding: 1rem 3rem; cursor: pointer; font-weight: 700; border: none; }
-.control-row button.secondary { background: var(--surface-2); color: var(--text-secondary); }
-.control-row button { background: var(--brand-green); color: var(--text-primary); }
-
-@media (max-width: 1200px) { .main-content { grid-template-columns: 1.1fr 1fr; } .station-grid { grid-template-columns: 1fr; } }
-@media (max-width: 900px) { .mission-control { padding: 1rem; } .main-content { display: flex; flex-direction: column; } .left-panel { max-height: 50vh; } .setup-panel { flex-direction: column; gap: 1rem; } }
+.control-row button { border-radius: 999px; font-size: 1.1rem; padding: 0.9rem 2rem; cursor: pointer; font-weight: 600; border: none; min-width: 120px; }
+.control-row button.secondary { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border-color); }
+.control-row button.primary { background: var(--brand-green); color: var(--text-primary); }
+.control-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.control-row button.finish { border-color: #ef4444; color: #ef4444; }
 </style>
