@@ -24,6 +24,7 @@ let timerId = null;
 let isSetupVisible = false;
 let showQr = false;
 let sessionId = null;
+let qrJoinUrl = '';
 
 // --- Staff Roster Logic ---
 let totalStations = workout.exercises?.length ?? 0;
@@ -58,6 +59,11 @@ limit(1)
 const sessionsSnapshot = await getDocs(sessionsQuery);
 if (!sessionsSnapshot.empty) { sessionId = sessionsSnapshot.docs[0].id; }
 });
+
+$: {
+    const baseOrigin = url?.origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
+    qrJoinUrl = sessionId && baseOrigin ? `${baseOrigin}/live/${sessionId}` : '';
+}
 
 // --- Timer Core Functions ---
 function advancePhase() {
@@ -129,12 +135,12 @@ onDestroy(() => clearInterval(timerId));
 </div>
 {/if}
 
-{#if showQr && sessionId}
+{#if showQr && sessionId && qrJoinUrl}
 <div class="modal-overlay" on:click|self={() => showQr = false}>
 <div class="modal-content qr-modal">
 <h2>Scan to Join Live Session</h2>
 <p>Members can scan this with their phone to join.</p>
-<img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`${url.origin}/live/${sessionId}`)}`} alt="QR Code to join session" />
+<img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrJoinUrl)}`} alt="QR Code to join session" />
 </div>
 </div>
 {/if}
