@@ -1,162 +1,148 @@
 <script>
-  // @ts-nocheck
-  import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { db, auth } from '$lib/firebase';
-  import { collection, addDoc, serverTimestamp, getDocs, doc, setDoc } from 'firebase/firestore';
+	// @ts-nocheck
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { db, auth } from '$lib/firebase';
+	import { collection, addDoc, serverTimestamp, getDocs, doc, setDoc } from 'firebase/firestore';
 
-  const CATEGORY_OPTIONS = ['Bodyweight', 'Resistance', 'Cardio Machine'];
-  const DEFAULT_CATEGORY = CATEGORY_OPTIONS[0];
+	const CATEGORY_OPTIONS = ['Bodyweight', 'Resistance', 'Cardio Machine'];
+	const DEFAULT_CATEGORY = CATEGORY_OPTIONS[0];
 
-  // Form state
-  let title = '';
-  let type = 'Circuit';
-  let mode = 'Individual';
-  let previousMode = mode;
-  let isBenchmark = false;
-  let notes = '';
-  let exercises = [getDefaultIndividualExercise()];
+	// Form state
+	let title = '';
+	let type = 'Circuit';
+	let mode = 'Individual';
+	let isBenchmark = false;
+	let notes = '';
+	let exercises = [{ name: '', description: '', category: DEFAULT_CATEGORY }];
 
-  // UI state
-  let isSubmitting = false;
-  let successMessage = '';
-  let errorMessage = '';
-  let allExerciseNames = [];
+	// UI state
+	let isSubmitting = false;
+	let successMessage = '';
+	let errorMessage = '';
+	let allExerciseNames = [];
 
-  function getDefaultIndividualExercise() {
-    return { name: '', description: '', category: DEFAULT_CATEGORY };
-  }
+	// --- Helper Functions to create default states ---
+	function getDefaultIndividualExercise() {
+		return { name: '', description: '', category: DEFAULT_CATEGORY };
+	}
+	function getDefaultPartnerStation(index = 0) {
+		return {
+			name: `Station ${index + 1}`,
+			p1: { task: '', category: DEFAULT_CATEGORY },
+			p2: { task: '', category: DEFAULT_CATEGORY },
+			startsOn: 'P1'
+		};
+	}
 
-  function getDefaultPartnerStation(index = 0) {
-    return {
-      name: `Station ${index + 1}`,
-      p1: { task: '', category: DEFAULT_CATEGORY },
-      p2: { task: '', category: DEFAULT_CATEGORY },
-      startsOn: 'P1'
-    };
-  }
+	// --- Reactive statement to reset exercises when mode changes ---
+	$: if (mode) {
+		exercises = mode === 'Partner' ? [getDefaultPartnerStation()] : [getDefaultIndividualExercise()];
+	}
 
-  function sanitizeCategory(category) {
-    return CATEGORY_OPTIONS.includes(category) ? category : DEFAULT_CATEGORY;
-  }
+	onMount(async () => {
+		const querySnapshot = await getDocs(collection(db, 'exercises'));
+		allExerciseNames = querySnapshot.docs.map((docSnap) => docSnap.data().name);
+	});
 
-  function normalizeStartsOn(value) {
-    return value === 'P2' ? 'P2' : 'P1';
-  }
+	function addExercise() {
+		if (mode === 'Partner') {
+			exercises = [...exercises, getDefaultPartnerStation(exercises.length)];
+		} else {
+			exercises = [...exercises, getDefaultIndividualExercise()];
+		}
+	}
 
-  // Reactive statement to automatically reset the exercises when the mode changes
-  $: if (mode !== previousMode) {
-    exercises = mode === 'Partner' ? [getDefaultPartnerStation()] : [getDefaultIndividualExercise()];
-    previousMode = mode;
-  }
+	function removeExercise(index) {
+		exercises = exercises.filter((_, i) => i !== index);
+	}
 
-  onMount(async () => {
-    const querySnapshot = await getDocs(collection(db, 'exercises'));
-    allExerciseNames = querySnapshot.docs.map((docSnap) => docSnap.data().name);
-  });
+	// --- NEW: Refactored and more robust saveWorkout function ---
+	async function saveWorkout() {
+		isSubmitting = true;
+		errorMessage = '';
+		successMessage = '';
 
-  function addExercise() {
-    if (mode === 'Partner') {
-      exercises = [...exercises, getDefaultPartnerStation(exercises.length)];
-    } else {
-      exercises = [...exercises, getDefaultIndividualExercise()];
-    }
-  }
+		try {
+			const currentUser = auth.currentUser;
+			if (!currentUser) {
+				throw new Error('You must be signed in to create workouts.');
+			}
 
-  function removeExercise(index) {
-    exercises = exercises.filter((_, i) => i !== index);
-  }
+			// 1. Basic Validation
+			if (!title.trim()) {
+				throw new Error('Workout title is required.');
+			}
 
-  function validateExercises() {
-    if (mode === 'Partner') {
-      return exercises.some((exercise) => {
-        const stationName = exercise.name?.trim?.();
-        const p1Task = exercise.p1?.task?.trim?.();
-        const p2Task = exercise.p2?.task?.trim?.();
-        return !stationName || !p1Task || !p2Task;
-      });
-    }
+			// 2. Build the final, clean exercises array
+			let finalExercises = [];
+			if (mode === 'Partner') {
+				for (const [index, exercise] of exercises.entries()) {
+					if (!exercise.name?.trim() || !exercise.p1?.task?.trim() || !exercise.p2?.task?.trim()) {
+						throw new Error(`All fields are required for Station ${index + 1}.`);
+					}
+					finalExercises.push({
+						name: exercise.name.trim(),
+						startsOn: exercise.startsOn || 'P1',
+						p1: {
+							task: exercise.p1.task.trim(),
+							category: exercise.p1.category || DEFAULT_CATEGORY
+						},
+						p2: {
+							task: exercise.p2.task.trim(),
+							category: exercise.p2.category || DEFAULT_CATEGORY
+						}
+					});
+				}
+			} else {
+				for (const exercise of exercises) {
+					if (!exercise.name?.trim()) {
+						throw new Error('All exercise names are required.');
+					}
+					finalExercises.push({
+						name: exercise.name.trim(),
+						description: exercise.description?.trim() || '',
+						category: exercise.category || DEFAULT_CATEGORY
+					});
+				}
+			}
 
-    return exercises.some((exercise) => !exercise.name?.trim?.());
-  }
+			// 3. Construct the final workout object to save
+			const workoutData = {
+				title: title.trim(),
+				type,
+				mode,
+				isBenchmark,
+				notes: notes.trim(),
+				exercises: finalExercises,
+				creatorId: currentUser.uid,
+				createdAt: serverTimestamp()
+			};
 
-  async function saveWorkout() {
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      errorMessage = 'You must be signed in to create workouts.';
-      return;
-    }
+			// 4. Save to Firestore
+			await addDoc(collection(db, 'workouts'), workoutData);
 
-    const trimmedTitle = title?.trim?.() ?? '';
-    const isInvalid = validateExercises();
+			// 5. Update autocomplete list (no change to this logic)
+			for (const exercise of finalExercises) {
+				const namesToPersist = mode === 'Partner' ? [exercise.p1.task, exercise.p2.task] : [exercise.name];
+				for (const name of namesToPersist) {
+					if (name) {
+						const exerciseRef = doc(db, 'exercises', name.toLowerCase());
+						await setDoc(exerciseRef, { name: name });
+					}
+				}
+			}
 
-    if (!trimmedTitle || isInvalid) {
-      errorMessage = 'Workout title and all required exercise/task fields are required.';
-      return;
-    }
+			successMessage = 'Workout saved successfully!';
+			setTimeout(() => goto('/admin/workouts'), 1500);
 
-    isSubmitting = true;
-    errorMessage = '';
-    successMessage = '';
-
-    try {
-      const normalizedExercises =
-        mode === 'Partner'
-          ? exercises.map((exercise, index) => ({
-              name: exercise.name?.trim?.() || `Station ${index + 1}`,
-              p1: {
-                task: exercise.p1?.task?.trim?.() ?? '',
-                category: sanitizeCategory(exercise.p1?.category)
-              },
-              p2: {
-                task: exercise.p2?.task?.trim?.() ?? '',
-                category: sanitizeCategory(exercise.p2?.category)
-              },
-              startsOn: normalizeStartsOn(exercise.startsOn)
-            }))
-          : exercises.map((exercise) => ({
-              name: exercise.name?.trim?.() ?? '',
-              description: exercise.description?.trim?.() ?? '',
-              category: sanitizeCategory(exercise.category)
-            }));
-
-      const workoutData = {
-        title: trimmedTitle,
-        type,
-        mode,
-        isBenchmark,
-        notes: notes?.trim?.() ?? '',
-        exercises: normalizedExercises,
-        creatorId: currentUser.uid,
-        createdAt: serverTimestamp()
-      };
-
-      await addDoc(collection(db, 'workouts'), workoutData);
-
-      for (const exercise of normalizedExercises) {
-        const namesToPersist =
-          mode === 'Partner'
-            ? [exercise.p1.task, exercise.p2.task]
-            : [exercise.name];
-
-        for (const rawName of namesToPersist) {
-          const exerciseName = rawName?.trim?.();
-          if (!exerciseName) continue;
-
-          const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
-          await setDoc(exerciseRef, { name: exerciseName });
-        }
-      }
-
-      successMessage = 'Workout saved successfully!';
-      setTimeout(() => goto('/admin/workouts'), 1500);
-    } catch (error) {
-      console.error('Error saving workout: ', error);
-      errorMessage = 'Failed to save workout. Please try again.';
-    } finally {
-      isSubmitting = false;
-    }
-  }
+		} catch (error) {
+			console.error('Detailed Save Error:', error); // This will appear in the console
+			errorMessage = error.message || 'Failed to save workout. Please try again.';
+		} finally {
+			isSubmitting = false;
+		}
+	}
 </script>
 
 <div class="form-container">
