@@ -2,7 +2,7 @@
 // @ts-nocheck
 import { onDestroy, onMount } from 'svelte';
 import { db } from '$lib/firebase';
-import { collection, query, where, getDocs, limit, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, orderBy, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 export let data;
 const { workout, url } = data;
@@ -24,6 +24,7 @@ let timerId = null;
 let isSetupVisible = false;
 let showQr = false;
 let sessionId = null;
+let lastBroadcast = 0; // For throttling updates
 let qrJoinUrl = '';
 
 // --- Staff Roster Logic ---
@@ -65,6 +66,25 @@ $: {
     qrJoinUrl = sessionId && baseOrigin ? `${baseOrigin}/live/${sessionId}` : '';
 }
 
+async function broadcastState() {
+    if (!sessionId) return;
+    const now = Date.now();
+    if (now - lastBroadcast < 950) return;
+
+    lastBroadcast = now;
+    const liveStateRef = doc(db, 'sessions', sessionId, 'liveState', 'data');
+
+    await setDoc(liveStateRef, {
+        phase: state.phase,
+        remaining: state.remaining,
+        duration: state.duration,
+        currentStation: state.currentStation,
+        isRunning: state.isRunning,
+        isComplete: state.isComplete,
+        movesCompleted: movesCompleted
+    });
+}
+
 // --- Timer Core Functions ---
 function advancePhase() {
 if (!totalStations) return; state.lastCue = 0; const nextPhaseIndex = state.phaseIndex + 1;
@@ -92,6 +112,7 @@ state.remaining -= 0.1;
 const secs = Math.ceil(state.remaining);
 if (secs <= 3 && secs >= 1 && secs !== state.lastCue) { state.lastCue = secs; countBeep(secs); }
 if (state.remaining <= 0) { advancePhase(); }
+broadcastState();
 state = state;
 }
 async function startTimer() {
@@ -100,6 +121,7 @@ if (state.phaseIndex === -1) { advancePhase(); }
 state.isRunning = true;
 timerId = setInterval(tick, 100);
 commitAllAssignments();
+broadcastState();
 if (sessionId) {
 try {
 await updateDoc(doc(db, 'sessions', sessionId), { stationAssignments });
@@ -108,9 +130,9 @@ console.error('Failed to save station assignments', error);
 }
 }
 }
-function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); }
-function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; }
-function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); }
+function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); broadcastState(); }
+function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; broadcastState(); }
+function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); broadcastState(); }
 function openSetup() { pauseTimer(); isSetupVisible = true; }
 function closeSetup() { commitAllAssignments(); isSetupVisible = false; }
 function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0')); }
