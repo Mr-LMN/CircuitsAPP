@@ -127,174 +127,53 @@
 </div>
 
 <style>
-	.page-container {
-		width: 100%;
-		max-width: 1200px;
-		margin: 2rem auto;
-		padding: 2rem;
-	}
-	.header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 2rem;
-		flex-wrap: wrap;
-		gap: 1rem;
-	}
-	h1 {
-		color: var(--yellow);
-	}
-	.empty-state {
-		text-align: center;
-		padding: 3rem;
-		background-color: var(--card);
-		border: 1px dashed var(--border-color);
-		border-radius: 16px;
-		color: var(--text-muted);
-	}
-	.workouts-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-		gap: 1rem;
-	}
-	.workout-card {
-		background-color: var(--card);
-		border: 1px solid var(--border-color);
-		border-radius: 16px;
-		padding: 1.5rem;
-		display: flex;
-		flex-direction: column;
-	}
-	.card-header {
-		margin-bottom: 1rem;
-		border-bottom: 1px solid var(--border-color);
-		padding-bottom: 1rem;
-	}
-	.card-header h3 {
-		margin-bottom: 0.5rem;
-	}
-	.badge {
-		display: inline-block;
-		padding: 0.25rem 0.75rem;
-		border-radius: 999px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		margin-right: 0.5rem;
-		text-transform: uppercase;
-		background-color: #333;
-		color: #eee;
-	}
-	.badge.circuit {
-		background-color: #059669;
-	}
-	.badge.amrap {
-		background-color: #d97706;
-	}
-	.badge.emom {
-		background-color: #6d28d9;
-	}
-	.badge.partner {
-		background-color: #db2777;
-	}
-	.notes {
-		color: var(--text-muted);
-		font-style: italic;
-		margin-bottom: 1rem;
-		flex-grow: 1;
-	}
-        .exercise-list ul {
-                list-style-type: none;
-                padding-left: 0;
-                font-size: 0.9rem;
-        }
-        .exercise-list li {
-                padding: 0.25rem 0;
-        }
-        .exercise-list li.partner-station {
-                display: flex;
-                flex-direction: column;
-                gap: 0.35rem;
-                padding: 0.75rem;
-                border: 1px solid var(--border-color);
-                border-radius: 8px;
-                margin-bottom: 0.5rem;
-                background-color: rgba(255, 255, 255, 0.02);
-        }
-        .station-title-row {
-                display: flex;
-                justify-content: space-between;
-                gap: 0.5rem;
-                font-weight: 600;
-        }
-        .station-name {
-                color: var(--text-primary);
-        }
-        .starts-on {
-                font-size: 0.75rem;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                color: var(--text-muted);
-        }
-        .exercise-name {
-                font-weight: 600;
-        }
-        .exercise-description {
-                color: var(--text-muted);
-        }
-        .task-line {
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-        }
-        .task-label {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                width: 28px;
-                height: 28px;
-                border-radius: 50%;
-                font-size: 0.75rem;
-                font-weight: 700;
-                color: #111827;
-        }
-        .task-label.p1 {
-                background-color: #fcd34d;
-        }
-        .task-label.p2 {
-                background-color: #38bdf8;
-        }
-        .task-text {
-                flex: 1;
-                color: var(--text-muted);
-        }
-	.card-actions {
-		margin-top: 1.5rem;
-		display: flex;
-		gap: 0.5rem;
-		justify-content: flex-end;
-	}
-	.action-btn {
-		border: none;
-		border-radius: 8px;
-		padding: 0.5rem 1rem;
-		cursor: pointer;
-		font-weight: 600;
-	}
-	.action-btn.edit {
-		background-color: #2563eb;
-		color: white;
-	}
-	.action-btn.delete {
-		background-color: var(--error);
-		color: white;
-	}
-	.action-btn.start {
-		background-color: var(--green);
-		color: var(--yellow);
-		flex-grow: 1;
-	}
-	.primary-btn {
-		/* Assuming styles from app.css */
-		text-decoration: none;
-	}
+.page-container { width: 100%; max-width: 1200px; margin: 2rem auto; padding: 2rem; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem; }
+h1 { color: var(--brand-yellow); font-family: var(--font-display); font-size: 3rem; letter-spacing: 2px; }
+.empty-state { text-align: center; padding: 3rem; background-color: var(--surface-1); border: 1px dashed var(--border-color); border-radius: 16px; color: var(--text-muted); }
+.workouts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1.5rem; }
+.workout-card {
+background-color: var(--surface-1);
+border: 1px solid var(--border-color);
+border-radius: 16px;
+padding: 1.5rem;
+display: flex;
+flex-direction: column; /* Ensures content flows top-to-bottom */
+}
+.card-header { margin-bottom: 1rem; }
+.card-header h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+.badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-right: 0.5rem; text-transform: uppercase; }
+.badge.circuit { background-color: #059669; color: white; }
+.badge.partner { background-color: #DB2777; color: white; }
+.badge.benchmark { background-color: var(--brand-yellow); color: var(--bg-main); }
+
+.notes {
+color: var(--text-muted);
+font-style: italic;
+margin-bottom: 1rem;
+min-height: 40px; /* Ensures a minimum height but doesn't force expansion */
+flex-grow: 0; /* FIX: This prevents the notes from pushing exercises to the bottom */
+}
+
+.exercise-list {
+margin-top: auto; /* Pushes this section to the bottom if there's space */
+padding-top: 1rem;
+border-top: 1px solid var(--border-color);
+}
+.exercise-list strong { font-size: 0.9rem; color: var(--text-secondary); }
+.exercise-list ul { list-style: none; padding: 0; margin-top: 0.5rem; font-size: 0.85rem; }
+.exercise-list li { margin-bottom: 0.3rem; } /* Tighter spacing */
+.exercise-list li strong { color: var(--text-primary); }
+.exercise-list li span { color: var(--text-muted); margin-left: 0.5rem; }
+
+.card-actions { margin-top: 1.5rem; display: flex; gap: 0.5rem; justify-content: flex-end; }
+.action-btn { border: none; border-radius: 8px; padding: 0.5rem 1rem; cursor: pointer; font-weight: 600; }
+.action-btn.edit { background-color: #2563EB; color: white; }
+.action-btn.delete { background-color: #ef4444; color: white; }
+.action-btn.start { background-color: var(--brand-green); color: var(--brand-yellow); flex-grow: 1; }
+
+.filter-controls { display: flex; gap: 0.5rem; margin-bottom: 2rem; align-items: center; flex-wrap: wrap; }
+.filter-controls button { background-color: var(--surface-1); border: 1px solid var(--border-color); color: var(--text-muted); padding: 0.5rem 1rem; border-radius: 999px; cursor: pointer; }
+.filter-controls button.active { background-color: var(--brand-yellow); color: var(--bg-main); border-color: var(--brand-yellow); font-weight: bold; }
+.link-btn { background: none; border: none; color: var(--brand-yellow); cursor: pointer; }
 </style>
