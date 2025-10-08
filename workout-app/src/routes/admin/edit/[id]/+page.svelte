@@ -1,524 +1,552 @@
 <script>
-	// @ts-nocheck
-	import { onMount } from 'svelte';
-	import { db } from '$lib/firebase';
-	import { doc, updateDoc, getDocs, setDoc, collection } from 'firebase/firestore';
-	import { goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
+  // @ts-nocheck
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { db } from '$lib/firebase';
+  import { doc, updateDoc, getDocs, collection, setDoc } from 'firebase/firestore';
 
-	// This is how SvelteKit passes data from a load function to a page.
-	// The 'workout' object comes directly from our +page.js file.
-	export let data;
+  export let data;
 
-        const categoryOptions = ['Cardio Machine', 'Resistance', 'Bodyweight'];
-        const defaultCategory = categoryOptions[0];
+  const CATEGORY_OPTIONS = ['Bodyweight', 'Resistance', 'Cardio Machine'];
+  const DEFAULT_CATEGORY = CATEGORY_OPTIONS[0];
 
-        // Pre-fill all our form variables with the loaded data.
-        let title = data.workout.title;
-        let type = data.workout.type;
-        let mode = data.workout.mode;
-        let isBenchmark = data.workout.isBenchmark;
-        let notes = data.workout.notes;
-        // We deep-copy the exercises array to avoid weird reactivity issues.
-        let exercises = JSON.parse(JSON.stringify(data.workout.exercises)).map((exercise) => ({
-                ...exercise,
-                category: exercise.category ?? defaultCategory
-        }));
-        let structureMode = mode;
+  let title = data.workout.title ?? '';
+  let type = data.workout.type ?? 'Circuit';
+  let mode = data.workout.mode ?? 'Individual';
+  let previousMode = mode;
+  let isBenchmark = Boolean(data.workout.isBenchmark);
+  let notes = data.workout.notes ?? '';
 
-        function normalizeStarter(value) {
-                return value?.toString?.().toUpperCase() === 'P2' ? 'P2' : 'P1';
+  function getDefaultIndividualExercise() {
+    return { name: '', description: '', category: DEFAULT_CATEGORY };
+  }
+
+  function getDefaultPartnerStation(index = 0) {
+    return {
+      name: `Station ${index + 1}`,
+      p1: { task: '', category: DEFAULT_CATEGORY },
+      p2: { task: '', category: DEFAULT_CATEGORY },
+      startsOn: 'P1'
+    };
+  }
+
+  function sanitizeCategory(category) {
+    return CATEGORY_OPTIONS.includes(category) ? category : DEFAULT_CATEGORY;
+  }
+
+  function normalizeStartsOn(value) {
+    return value === 'P2' ? 'P2' : 'P1';
+  }
+
+  function toPartnerExercise(exercise, index) {
+    return {
+      name: exercise?.name || `Station ${index + 1}`,
+      p1: {
+        task: exercise?.p1?.task ?? exercise?.p1_task ?? exercise?.description ?? '',
+        category: sanitizeCategory(
+          exercise?.p1?.category ?? exercise?.p1_category ?? exercise?.category
+        )
+      },
+      p2: {
+        task: exercise?.p2?.task ?? exercise?.p2_task ?? '',
+        category: sanitizeCategory(
+          exercise?.p2?.category ?? exercise?.p2_category ?? exercise?.category
+        )
+      },
+      startsOn: normalizeStartsOn(exercise?.startsOn ?? exercise?.startsWith ?? exercise?.starter)
+    };
+  }
+
+  function toIndividualExercise(exercise) {
+    return {
+      name: exercise?.name ?? '',
+      description:
+        exercise?.description ??
+        exercise?.p1?.task ??
+        exercise?.p2?.task ??
+        exercise?.p1_task ??
+        exercise?.p2_task ??
+        '',
+      category: sanitizeCategory(
+        exercise?.category ?? exercise?.p1?.category ?? exercise?.p1_category
+      )
+    };
+  }
+
+  function initializeExercises(initialExercises = []) {
+    if (!Array.isArray(initialExercises) || initialExercises.length === 0) {
+      return mode === 'Partner' ? [getDefaultPartnerStation()] : [getDefaultIndividualExercise()];
+    }
+
+    return mode === 'Partner'
+      ? initialExercises.map((exercise, index) => toPartnerExercise(exercise, index))
+      : initialExercises.map((exercise) => toIndividualExercise(exercise));
+  }
+
+  let exercises = initializeExercises(data.workout.exercises ?? []);
+
+  // UI state
+  let isSubmitting = false;
+  let successMessage = '';
+  let errorMessage = '';
+  let allExerciseNames = [];
+
+  // Reactive statement to automatically reset the exercises when the mode changes
+  $: if (mode !== previousMode) {
+    exercises = mode === 'Partner' ? [getDefaultPartnerStation()] : [getDefaultIndividualExercise()];
+    previousMode = mode;
+  }
+
+  onMount(async () => {
+    const querySnapshot = await getDocs(collection(db, 'exercises'));
+    allExerciseNames = querySnapshot.docs.map((docSnap) => docSnap.data().name);
+  });
+
+  function addExercise() {
+    if (mode === 'Partner') {
+      exercises = [...exercises, getDefaultPartnerStation(exercises.length)];
+    } else {
+      exercises = [...exercises, getDefaultIndividualExercise()];
+    }
+  }
+
+  function removeExercise(index) {
+    exercises = exercises.filter((_, i) => i !== index);
+  }
+
+  function validateExercises() {
+    if (mode === 'Partner') {
+      return exercises.some((exercise) => {
+        const stationName = exercise.name?.trim?.();
+        const p1Task = exercise.p1?.task?.trim?.();
+        const p2Task = exercise.p2?.task?.trim?.();
+        return !stationName || !p1Task || !p2Task;
+      });
+    }
+
+    return exercises.some((exercise) => !exercise.name?.trim?.());
+  }
+
+  async function updateWorkout() {
+    const trimmedTitle = title?.trim?.() ?? '';
+    const isInvalid = validateExercises();
+
+    if (!trimmedTitle || isInvalid) {
+      errorMessage = 'Workout title and all required exercise/task fields are required.';
+      return;
+    }
+
+    isSubmitting = true;
+    errorMessage = '';
+    successMessage = '';
+
+    try {
+      const normalizedExercises =
+        mode === 'Partner'
+          ? exercises.map((exercise, index) => ({
+              name: exercise.name?.trim?.() || `Station ${index + 1}`,
+              p1: {
+                task: exercise.p1?.task?.trim?.() ?? '',
+                category: sanitizeCategory(exercise.p1?.category)
+              },
+              p2: {
+                task: exercise.p2?.task?.trim?.() ?? '',
+                category: sanitizeCategory(exercise.p2?.category)
+              },
+              startsOn: normalizeStartsOn(exercise.startsOn)
+            }))
+          : exercises.map((exercise) => ({
+              name: exercise.name?.trim?.() ?? '',
+              description: exercise.description?.trim?.() ?? '',
+              category: sanitizeCategory(exercise.category)
+            }));
+
+      const workoutRef = doc(db, 'workouts', data.workout.id);
+      const updatedData = {
+        title: trimmedTitle,
+        type,
+        mode,
+        isBenchmark,
+        notes: notes?.trim?.() ?? '',
+        exercises: normalizedExercises
+      };
+
+      await updateDoc(workoutRef, updatedData);
+
+      for (const exercise of normalizedExercises) {
+        const namesToPersist =
+          mode === 'Partner'
+            ? [exercise.p1.task, exercise.p2.task]
+            : [exercise.name];
+
+        for (const rawName of namesToPersist) {
+          const exerciseName = rawName?.trim?.();
+          if (!exerciseName) continue;
+
+          const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
+          await setDoc(exerciseRef, { name: exerciseName });
         }
+      }
 
-        function convertToPartner(list) {
-                return list.map((exercise, index) => ({
-                        name: exercise.name || `Station ${index + 1}`,
-                        p1_task: exercise.p1_task ?? exercise.description ?? '',
-                        p2_task: exercise.p2_task ?? '',
-                        startsWith: normalizeStarter(exercise.startsWith ?? exercise.starter),
-                        category: exercise.category ?? defaultCategory
-                }));
-        }
-
-        function convertToIndividual(list) {
-                return list.map((exercise) => ({
-                        name: exercise.name ?? '',
-                        description:
-                                exercise.description ??
-                                [exercise.p1_task, exercise.p2_task].filter(Boolean).join(' / '),
-                        category: exercise.category ?? defaultCategory
-                }));
-        }
-
-	let isSubmitting = false;
-	let successMessage = '';
-	let errorMessage = '';
-	let allExerciseNames = [];
-
-	onMount(async () => {
-		const querySnapshot = await getDocs(collection(db, 'exercises'));
-		allExerciseNames = querySnapshot.docs.map((doc) => doc.data().name);
-	});
-
-        $: if (mode !== structureMode) {
-                exercises = mode === 'Partner' ? convertToPartner(exercises) : convertToIndividual(exercises);
-                structureMode = mode;
-        }
-
-        function addExercise() {
-                exercises =
-                        mode === 'Partner'
-                                ? [
-                                          ...exercises,
-                                          {
-                                                  name: `Station ${exercises.length + 1}`,
-                                                  p1_task: '',
-                                                  p2_task: '',
-                                                  startsWith: 'P1',
-                                                  category: defaultCategory
-                                          }
-                                  ]
-                                : [
-                                          ...exercises,
-                                          { name: '', description: '', category: defaultCategory }
-                                  ];
-        }
-
-        function removeExercise(index) {
-                exercises = exercises.filter((_, i) => i !== index);
-        }
-
-        function updateStarter(index, value) {
-                exercises = exercises.map((exercise, i) =>
-                        i === index ? { ...exercise, startsWith: normalizeStarter(value) } : exercise
-                );
-        }
-
-	// The main difference is this function now UPDATES an existing document.
-        async function updateWorkout() {
-                const isInvalid =
-                        mode === 'Partner'
-                                        ? exercises.some((ex) => !ex.name || !ex.p1_task || !ex.p2_task)
-                                : exercises.some((ex) => !ex.name);
-
-                if (!title || isInvalid) {
-                        errorMessage = 'Workout title and all required exercise/task fields are required.';
-                        return;
-                }
-
-		isSubmitting = true;
-		errorMessage = '';
-		successMessage = '';
-
-		try {
-			// 1. Get a reference to the existing document using its ID
-			const workoutRef = doc(db, 'workouts', data.workout.id);
-
-			// 2. Create the object with the updated data
-                        const normalizedExercises =
-                                mode === 'Partner'
-                                        ? exercises.map((exercise, index) => ({
-                                                  name: exercise.name || `Station ${index + 1}`,
-                                                  p1_task: exercise.p1_task,
-                                                  p2_task: exercise.p2_task,
-                                                  startsWith: normalizeStarter(exercise.startsWith),
-                                                  category: exercise.category ?? defaultCategory
-                                          }))
-                                        : exercises.map((exercise) => ({
-                                                  name: exercise.name,
-                                                  description: exercise.description,
-                                                  category: exercise.category ?? defaultCategory
-                                          }));
-
-                        const updatedData = {
-                                title,
-                                type,
-                                mode,
-                                isBenchmark,
-                                notes,
-                                exercises: normalizedExercises
-                        };
-
-                        // 3. Call 'updateDoc' instead of 'addDoc'
-                        await updateDoc(workoutRef, updatedData);
-
-                        // 4. Save any new unique exercises for the autocomplete feature
-                        for (const exercise of normalizedExercises) {
-                                const namesToSave =
-                                        mode === 'Partner' ? [exercise.p1_task, exercise.p2_task] : [exercise.name];
-                                for (const name of namesToSave) {
-                                        const exerciseName = name?.trim?.() ?? '';
-                                        if (exerciseName) {
-                                                const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
-                                                await setDoc(exerciseRef, { name: exerciseName });
-                                        }
-                                }
-                        }
-
-			successMessage = 'Workout updated successfully!';
-			setTimeout(() => goto(resolve('/admin/workouts')), 1500);
-		} catch (error) {
-			console.error('Error updating workout: ', error);
-			errorMessage = 'Failed to update workout. Please try again.';
-		} finally {
-			isSubmitting = false;
-		}
-	}
+      successMessage = 'Workout updated successfully!';
+      setTimeout(() => goto('/admin/workouts'), 1500);
+    } catch (error) {
+      console.error('Error updating workout: ', error);
+      errorMessage = 'Failed to update workout. Please try again.';
+    } finally {
+      isSubmitting = false;
+    }
+  }
 </script>
 
 <div class="form-container">
-	<h1>Edit Workout</h1>
-	<form on:submit|preventDefault={updateWorkout}>
-		<div class="form-group">
-			<label for="title">Workout Title</label>
-			<input id="title" type="text" bind:value={title} required />
-		</div>
+  <h1>Edit Workout</h1>
+  <form on:submit|preventDefault={updateWorkout}>
+    <div class="form-group">
+      <label for="title">Workout Title</label>
+      <input id="title" type="text" bind:value={title} required />
+    </div>
 
-		<div class="split-group">
-			<div class="form-group">
-				<label for="type">Workout Type</label>
-				<select id="type" bind:value={type}>
-					<option>Circuit</option> <option>AMRAP</option> <option>EMOM</option>
-					<option>Timed Rounds</option>
-				</select>
-			</div>
-			<div class="form-group">
-				<label for="mode">Participation Mode</label>
-				<select id="mode" bind:value={mode}>
-					<option>Individual</option> <option>Partner</option>
-				</select>
-			</div>
-		</div>
+    <div class="split-group">
+      <div class="form-group">
+        <label for="type">Workout Type</label>
+        <select id="type" bind:value={type}>
+          <option>Circuit</option>
+          <option>AMRAP</option>
+          <option>EMOM</option>
+          <option>Timed Rounds</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="mode">Participation Mode</label>
+        <select id="mode" bind:value={mode}>
+          <option>Individual</option>
+          <option>Partner</option>
+        </select>
+      </div>
+    </div>
 
-		<div class="form-group">
-			<label for="notes">Notes / Instructions</label>
-			<textarea id="notes" bind:value={notes} rows="3"></textarea>
-		</div>
-		<div class="form-group-checkbox">
-			<input id="benchmark" type="checkbox" bind:checked={isBenchmark} />
-			<label for="benchmark">Make this a Benchmark Workout</label>
-		</div>
+    <div class="form-group">
+      <label for="notes">Notes / Instructions</label>
+      <textarea id="notes" bind:value={notes} rows="3"></textarea>
+    </div>
 
-                <fieldset>
-                        <legend>
-                                Exercises
-                                {#if mode === 'Partner'}
-                                        <span class="fieldset-note">Partners alternate between A &amp; B tasks.</span>
-                                {/if}
-                        </legend>
-                        {#if mode === 'Partner'}
-                                <p class="partner-helper">
-                                        Assign the Partner A and Partner B duties for each station. The timer will include
-                                        a swap window so athletes can trade tasks between rounds.
-                                </p>
-                        {/if}
-                        <datalist id="exercise-suggestions">
-                                {#each allExerciseNames as name (name)}
-                                        <option value={name}></option>
-                                {/each}
-                        </datalist>
+    <div class="form-group-checkbox">
+      <input id="benchmark" type="checkbox" bind:checked={isBenchmark} />
+      <label for="benchmark">Make this a Benchmark Workout</label>
+    </div>
 
-                        {#if mode === 'Partner'}
-                                {#each exercises as exercise, i (i)}
-                                        <div class="exercise-item partner">
-                                                <input
-                                                        class="station-name"
-                                                        type="text"
-                                                        bind:value={exercise.name}
-                                                        placeholder="Station #{i + 1} Name"
-                                                        required
-                                                />
-                                                <select
-                                                        class="category-select"
-                                                        bind:value={exercise.category}
-                                                        aria-label="Exercise category"
-                                                >
-                                                        {#each categoryOptions as option}
-                                                                <option value={option}>{option}</option>
-                                                        {/each}
-                                                </select>
-                                                <div class="partner-tasks">
-                                                        <label class="task-label" for={`partner-a-${i}`}>
-                                                                Partner A Task
-                                                        </label>
-                                                        <input
-                                                                id={`partner-a-${i}`}
-                                                                type="text"
-                                                                bind:value={exercise.p1_task}
-                                                                placeholder="e.g., Treadmill Run"
-                                                                required
-                                                                list="exercise-suggestions"
-                                                        />
-                                                        <label class="task-label" for={`partner-b-${i}`}>
-                                                                Partner B Task
-                                                        </label>
-                                                        <input
-                                                                id={`partner-b-${i}`}
-                                                                type="text"
-                                                                bind:value={exercise.p2_task}
-                                                                placeholder="e.g., Plank Hold"
-                                                                required
-                                                                list="exercise-suggestions"
-                                                        />
-                                                </div>
-                                                <div class="starter-select">
-                                                        <span class="starter-label">Who starts this station?</span>
-                                                        <div class="starter-options">
-                                                                <label>
-                                                                        <input
-                                                                                type="radio"
-                                                                                name={`starter-${i}`}
-                                                                                value="P1"
-                                                                                checked={normalizeStarter(exercise.startsWith) === 'P1'}
-                                                                                on:change={() => updateStarter(i, 'P1')}
-                                                                        />
-                                                                        Partner A
-                                                                </label>
-                                                                <label>
-                                                                        <input
-                                                                                type="radio"
-                                                                                name={`starter-${i}`}
-                                                                                value="P2"
-                                                                                checked={normalizeStarter(exercise.startsWith) === 'P2'}
-                                                                                on:change={() => updateStarter(i, 'P2')}
-                                                                        />
-                                                                        Partner B
-                                                                </label>
-                                                        </div>
-                                                </div>
-                                                <button type="button" class="remove-btn" on:click={() => removeExercise(i)}
-                                                        >&times;</button
-                                                >
-                                        </div>
-                                {/each}
-                        {:else}
-                                {#each exercises as exercise, i (i)}
-                                        <div class="exercise-item">
-                                                <input
-                                                        type="text"
-                                                        bind:value={exercise.name}
-                                                        placeholder="Exercise #{i + 1} Name"
-                                                        required
-                                                        list="exercise-suggestions"
-                                                />
-                                                <select
-                                                        class="category-select"
-                                                        bind:value={exercise.category}
-                                                        aria-label="Exercise category"
-                                                >
-                                                        {#each categoryOptions as option}
-                                                                <option value={option}>{option}</option>
-                                                        {/each}
-                                                </select>
-                                                <input
-                                                        type="text"
-                                                        bind:value={exercise.description}
-                                                        placeholder="Description (e.g., 12 reps, 45s)"
-                                                />
-                                                <button type="button" class="remove-btn" on:click={() => removeExercise(i)}
-                                                        >&times;</button
-                                                >
-                                        </div>
-                                {/each}
-                        {/if}
-                        <button type="button" class="secondary-btn" on:click={addExercise}>+ Add Exercise</button>
-                </fieldset>
+    <fieldset>
+      <legend>Exercises</legend>
+      <datalist id="exercise-suggestions">
+        {#each allExerciseNames as name}<option value={name}></option>{/each}
+      </datalist>
 
-		{#if successMessage}
-			<p class="success-message">{successMessage}</p>
-		{/if}
-		{#if errorMessage}
-			<p class="error-message">{errorMessage}</p>
-		{/if}
+      {#if mode === 'Partner'}
+        {#each exercises as exercise, i}
+          <div class="station-editor-card">
+            <div class="station-editor-header">
+              <input class="station-name-input" type="text" bind:value={exercise.name} required />
+              <button type="button" class="remove-btn" on:click={() => removeExercise(i)}>&times;</button>
+            </div>
 
-		<button type="submit" class="primary-btn" disabled={isSubmitting}>
-			{isSubmitting ? 'Updating...' : 'Update Workout'}
-		</button>
-	</form>
+            <div class="partner-grid">
+              <div class="partner-column">
+                <label for={`p1-task-${i}`}>Partner A Task</label>
+                <input
+                  id={`p1-task-${i}`}
+                  type="text"
+                  bind:value={exercise.p1.task}
+                  required
+                  list="exercise-suggestions"
+                />
+                <label for={`p1-cat-${i}`}>Category</label>
+                <select id={`p1-cat-${i}`} bind:value={exercise.p1.category}>
+                  {#each CATEGORY_OPTIONS as option}
+                    <option>{option}</option>
+                  {/each}
+                </select>
+              </div>
+
+              <div class="partner-column">
+                <label for={`p2-task-${i}`}>Partner B Task</label>
+                <input
+                  id={`p2-task-${i}`}
+                  type="text"
+                  bind:value={exercise.p2.task}
+                  required
+                  list="exercise-suggestions"
+                />
+                <label for={`p2-cat-${i}`}>Category</label>
+                <select id={`p2-cat-${i}`} bind:value={exercise.p2.category}>
+                  {#each CATEGORY_OPTIONS as option}
+                    <option>{option}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+
+            <div class="starter-select">
+              <p class="starter-label">Who Starts This Station?</p>
+              <div class="radio-group">
+                <label>
+                  <input type="radio" bind:group={exercise.startsOn} value={'P1'} /> Partner A
+                </label>
+                <label>
+                  <input type="radio" bind:group={exercise.startsOn} value={'P2'} /> Partner B
+                </label>
+              </div>
+            </div>
+          </div>
+        {/each}
+      {:else}
+        {#each exercises as exercise, i}
+          <div class="exercise-item">
+            <input
+              type="text"
+              bind:value={exercise.name}
+              placeholder={`Exercise #${i + 1}`}
+              required
+              list="exercise-suggestions"
+            />
+            <select bind:value={exercise.category}>
+              {#each CATEGORY_OPTIONS as option}
+                <option>{option}</option>
+              {/each}
+            </select>
+            <input
+              type="text"
+              bind:value={exercise.description}
+              placeholder="Description (e.g., 12 reps, 45s)"
+            />
+            <button type="button" class="remove-btn" on:click={() => removeExercise(i)}>&times;</button>
+          </div>
+        {/each}
+      {/if}
+
+      <button type="button" class="secondary-btn" on:click={addExercise}>
+        {mode === 'Partner' ? '+ Add Station' : '+ Add Exercise'}
+      </button>
+    </fieldset>
+
+    {#if successMessage}<p class="success-message">{successMessage}</p>{/if}
+    {#if errorMessage}<p class="error-message">{errorMessage}</p>{/if}
+    <button type="submit" class="primary-btn" disabled={isSubmitting}>
+      {isSubmitting ? 'Saving...' : 'Update Workout'}
+    </button>
+  </form>
 </div>
 
 <style>
-	.form-container {
-		width: 100%;
-		max-width: 700px;
-		margin: 2rem auto;
-		padding: 2rem;
-		background-color: var(--card);
-		border: 1px solid var(--border-color);
-		border-radius: 16px;
-	}
-	h1 {
-		color: var(--yellow);
-		text-align: center;
-		margin-bottom: 2rem;
-	}
-	.split-group {
-		display: flex;
-		gap: 1rem;
-	}
-	.split-group > .form-group {
-		flex: 1;
-	}
-	select,
-	textarea {
-		width: 100%;
-		background-color: var(--bg);
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		color: var(--text);
-		padding: 0.75rem;
-		font-size: 1rem;
-	}
-	select {
-		-webkit-appearance: none;
-		-moz-appearance: none;
-		appearance: none;
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23ffd60a' class='w-6 h-6'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='m19.5 8.25-7.5 7.5-7.5-7.5' /%3E%3C/svg%3E%0A");
-		background-repeat: no-repeat;
-		background-position: right 0.75rem center;
-		background-size: 1.25em;
-	}
-	textarea {
-		font-family: inherit;
-	}
-	fieldset {
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		padding: 1rem;
-		margin-top: 1.5rem;
-	}
-	legend {
-		padding: 0 0.5rem;
-		color: var(--text-muted);
-	}
-	.exercise-item {
-		display: flex;
-		gap: 0.5rem;
-		align-items: center;
-		margin-bottom: 0.75rem;
-	}
-        .exercise-item input:first-child {
-                flex: 3;
-        }
-        .exercise-item .category-select {
-                flex: 2;
-        }
-        .exercise-item input:last-of-type {
-                flex: 2;
-        }
-	.remove-btn {
-		background: none;
-		border: 1px solid var(--error);
-		color: var(--error);
-		border-radius: 50%;
-		width: 28px;
-		height: 28px;
-		font-size: 1.2rem;
-		line-height: 1;
-		cursor: pointer;
-	}
-	.success-message {
-		color: var(--green);
-		background-color: rgba(6, 95, 70, 0.2);
-		border: 1px solid var(--green);
-		padding: 0.75rem;
-		border-radius: 8px;
-		text-align: center;
-		margin-top: 1rem;
-	}
-	.form-group-checkbox {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		margin-top: 1rem;
-		padding: 0.75rem;
-		background-color: var(--bg);
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-	}
-	.form-group-checkbox input[type='checkbox'] {
-		width: 1.25em;
-		height: 1.25em;
-	}
-	/* Assuming other styles like .primary-btn are in app.css */
-        .secondary-btn {
-                border: 1px solid var(--border-color);
-                background: none;
-                color: var(--text-muted);
-                padding: 0.5rem 1rem;
-                border-radius: 8px;
-                cursor: pointer;
-                display: block;
-                width: 100%;
-                margin-top: 0.5rem;
-        }
-        .fieldset-note {
-                display: inline-block;
-                margin-left: 0.75rem;
-                font-size: 0.8rem;
-                color: var(--text-muted);
-        }
-        .partner-helper {
-                margin: 0.5rem 0 1rem;
-                font-size: 0.9rem;
-                color: var(--text-muted);
-        }
-        .exercise-item.partner {
-                flex-direction: column;
-                align-items: stretch;
-                background: rgba(0, 0, 0, 0.2);
-                padding: 1rem;
-                border-radius: 8px;
-                position: relative;
-        }
-        .exercise-item.partner .remove-btn {
-                position: absolute;
-                top: 0.5rem;
-                right: 0.5rem;
-        }
-        .exercise-item.partner .station-name {
-                font-weight: bold;
-                margin-bottom: 0.75rem;
-        }
-        .partner-tasks {
-                display: flex;
-                flex-direction: column;
-                gap: 0.35rem;
-        }
-        .partner-tasks .task-label {
-                font-size: 0.75rem;
-                letter-spacing: 0.08em;
-                text-transform: uppercase;
-                color: var(--text-muted);
-        }
-        .partner-tasks input {
-                width: 100%;
-        }
-        .starter-select {
-                margin-top: 1rem;
-                display: flex;
-                flex-direction: column;
-                gap: 0.35rem;
-        }
-        .starter-label {
-                font-size: 0.75rem;
-                letter-spacing: 0.08em;
-                text-transform: uppercase;
-                color: var(--text-muted);
-        }
-        .starter-options {
-                display: flex;
-                gap: 1rem;
-                flex-wrap: wrap;
-        }
-        .starter-options label {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.35rem;
-                font-size: 0.85rem;
-                color: var(--text-muted);
-        }
-        .starter-options input[type='radio'] {
-                accent-color: var(--yellow);
-        }
+  .form-container {
+    width: 100%;
+    max-width: 720px;
+    margin: 2rem auto;
+    padding: 2rem;
+    background-color: var(--card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+  }
+
+  h1 {
+    color: var(--yellow);
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .form-group-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .split-group {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .split-group > .form-group {
+    flex: 1 1 220px;
+  }
+
+  input[type='text'],
+  textarea,
+  select {
+    width: 100%;
+    background-color: var(--bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 0.75rem;
+    font-size: 1rem;
+  }
+
+  textarea {
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  fieldset {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  legend {
+    padding: 0 0.5rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  .exercise-item {
+    display: grid;
+    grid-template-columns: 2fr 1fr 2fr auto;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .remove-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0 0.5rem;
+  }
+
+  .remove-btn:hover {
+    color: var(--yellow);
+  }
+
+  .secondary-btn,
+  .primary-btn {
+    padding: 0.85rem 1.25rem;
+    border-radius: 999px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .secondary-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text);
+    align-self: flex-start;
+  }
+
+  .secondary-btn:hover {
+    border-color: var(--yellow);
+    color: var(--yellow);
+  }
+
+  .primary-btn {
+    background: var(--yellow);
+    color: var(--deep-space);
+  }
+
+  .primary-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .success-message {
+    color: var(--success);
+  }
+
+  .error-message {
+    color: var(--danger);
+  }
+
+  /* NEW Professional Card Layout for Partner Exercises */
+  .station-editor-card {
+    background: var(--deep-space);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .station-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .station-name-input {
+    font-size: 1.25rem;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 0.5rem 0;
+    flex-grow: 1;
+  }
+
+  .partner-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .partner-column {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .partner-column label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  .starter-select {
+    margin-top: 0.5rem;
+  }
+
+  .starter-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  .radio-group {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.5rem;
+  }
+
+  .radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-secondary);
+  }
+
+  @media (max-width: 600px) {
+    .exercise-item {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
