@@ -23,8 +23,9 @@
 				const profileRef = doc(db, 'profiles', firebaseUser.uid);
 				const profileSnap = await getDoc(profileRef);
 
-				if (profileSnap.exists()) {
-					$isAdmin = profileSnap.data().isAdmin === true;
+                                if (profileSnap.exists()) {
+                                        const profileData = profileSnap.data();
+                                        $isAdmin = Boolean(profileData?.isAdmin);
 				} else {
 					$isAdmin = false;
 					if (window.location.pathname !== '/account/setup') {
