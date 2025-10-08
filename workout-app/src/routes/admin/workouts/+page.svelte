@@ -77,14 +77,40 @@
 						<span class="badge {workout.mode.toLowerCase()}">{workout.mode}</span>
 					</div>
 					<p class="notes">{workout.notes || 'No notes for this workout.'}</p>
-					<div class="exercise-list">
-						<strong>Exercises:</strong>
-						<ul>
-							{#each workout.exercises as exercise, j (`${workout.id}-${j}`)}
-								<li>{exercise.name} ({exercise.description})</li>
-							{/each}
-						</ul>
-					</div>
+                                        <div class="exercise-list">
+                                                <strong>Exercises:</strong>
+                                                <ul>
+                                                        {#each workout.exercises as exercise, j (`${workout.id}-${j}`)}
+                                                                {#if workout.mode === 'Partner'}
+                                                                        <li class="partner-station">
+                                                                                <div class="station-title-row">
+                                                                                        <span class="station-name">{exercise.name}</span>
+                                                                                        {#if exercise.startsOn}
+                                                                                                <span class="starts-on">Starts on {exercise.startsOn}</span>
+                                                                                        {/if}
+                                                                                </div>
+                                                                                <div class="task-line">
+                                                                                        <span class="task-label p1">P1</span>
+                                                                                        <span class="task-text">{exercise.p1?.task || exercise.p1_task || exercise.description || 'No task provided'}</span>
+                                                                                </div>
+                                                                                {#if exercise.p2?.task || exercise.p2_task}
+                                                                                        <div class="task-line">
+                                                                                                <span class="task-label p2">P2</span>
+                                                                                                <span class="task-text">{exercise.p2?.task || exercise.p2_task}</span>
+                                                                                        </div>
+                                                                                {/if}
+                                                                        </li>
+                                                                {:else}
+                                                                        <li>
+                                                                                <span class="exercise-name">{exercise.name}</span>
+                                                                                {#if exercise.description}
+                                                                                        <span class="exercise-description"> – {exercise.description}</span>
+                                                                                {/if}
+                                                                        </li>
+                                                                {/if}
+                                                        {/each}
+                                                </ul>
+                                        </div>
 					<div class="card-actions">
 						<button class="action-btn edit" on:click={() => editWorkout(workout.id)}>Edit</button>
 						<button class="action-btn delete" on:click={() => deleteWorkout(workout.id, i)}
@@ -176,14 +202,71 @@
 		margin-bottom: 1rem;
 		flex-grow: 1;
 	}
-	.exercise-list ul {
-		list-style-type: none;
-		padding-left: 0;
-		font-size: 0.9rem;
-	}
-	.exercise-list li {
-		padding: 0.25rem 0;
-	}
+        .exercise-list ul {
+                list-style-type: none;
+                padding-left: 0;
+                font-size: 0.9rem;
+        }
+        .exercise-list li {
+                padding: 0.25rem 0;
+        }
+        .exercise-list li.partner-station {
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
+                padding: 0.75rem;
+                border: 1px solid var(--border-color);
+                border-radius: 8px;
+                margin-bottom: 0.5rem;
+                background-color: rgba(255, 255, 255, 0.02);
+        }
+        .station-title-row {
+                display: flex;
+                justify-content: space-between;
+                gap: 0.5rem;
+                font-weight: 600;
+        }
+        .station-name {
+                color: var(--text-primary);
+        }
+        .starts-on {
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: var(--text-muted);
+        }
+        .exercise-name {
+                font-weight: 600;
+        }
+        .exercise-description {
+                color: var(--text-muted);
+        }
+        .task-line {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+        }
+        .task-label {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                font-size: 0.75rem;
+                font-weight: 700;
+                color: #111827;
+        }
+        .task-label.p1 {
+                background-color: #fcd34d;
+        }
+        .task-label.p2 {
+                background-color: #38bdf8;
+        }
+        .task-text {
+                flex: 1;
+                color: var(--text-muted);
+        }
 	.card-actions {
 		margin-top: 1.5rem;
 		display: flex;
