@@ -162,25 +162,59 @@ onDestroy(() => clearInterval(timerId));
 <main class="main-content">
 <div class="left-panel">
 <div class="station-grid">
-{#each workout.exercises as station, i}
-<article class="station-card" class:current={i === state.currentStation}>
-<header class="station-card__header">
-<span class="station-number">{i + 1}</span><h3>{station.name}</h3>
-{#if station.shared}<span class="shared-badge">Shared</span>{/if}
-</header>
-<div class="station-card__tasks">
-<div class="task-line"><span class="task-label p1">P1</span><span class="task-text">{station.p1?.task || station.p1_task || station.name}</span></div>
-{#if station.p2?.task || station.p2_task}<div class="task-line"><span class="task-label p2">P2</span><span class="task-text">{station.p2?.task || station.p2_task}</span></div>{/if}
-</div>
-<footer class="station-card__roster">
-<div class="roster-chips">
-{#if stationRoster[i]?.length}
-{#each stationRoster[i] as code}<span>{code}</span>{/each}
-{:else}<span class="roster-empty">OPEN</span>{/if}
-</div>
-</footer>
-</article>
-{/each}
+  {#each workout.exercises as station, i}
+    <article class="station-card" class:current={i === state.currentStation}>
+      <header class="station-card__header">
+        <div class="station-card__title">
+          <span class="station-number">{i + 1}</span>
+          <div>
+            <h3>{station.name}</h3>
+            {#if station.p1?.category || station.p2?.category || station.category}
+              <p class="station-category">
+                {#if station.p1?.category && station.p2?.category && station.p1?.category !== station.p2?.category}
+                  {station.p1?.category} • {station.p2?.category}
+                {:else}
+                  {station.p1?.category || station.p2?.category || station.category}
+                {/if}
+              </p>
+            {/if}
+          </div>
+        </div>
+        {#if station.shared}<span class="shared-badge">Shared</span>{/if}
+      </header>
+
+      <div class="station-card__body">
+        <div class="task-card">
+          <p class="task-heading">Partner A</p>
+          <p class="task-detail">{station.p1?.task || station.p1_task || station.name}</p>
+          {#if station.p1?.notes || station.p1?.category}
+            <p class="task-subtext">{station.p1?.notes || station.p1?.category}</p>
+          {/if}
+        </div>
+
+        {#if station.p2?.task || station.p2_task}
+          <div class="task-card">
+            <p class="task-heading">Partner B</p>
+            <p class="task-detail">{station.p2?.task || station.p2_task}</p>
+            {#if station.p2?.notes || station.p2?.category}
+              <p class="task-subtext">{station.p2?.notes || station.p2?.category}</p>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <footer class="station-card__roster">
+        <p class="roster-label">Starting Here</p>
+        <div class="roster-chips">
+          {#if stationRoster[i]?.length}
+            {#each stationRoster[i] as code}<span>{code}</span>{/each}
+          {:else}
+            <span class="roster-empty">OPEN</span>
+          {/if}
+        </div>
+      </footer>
+    </article>
+  {/each}
 </div>
 </div>
 <div class="right-panel">
@@ -232,22 +266,26 @@ onDestroy(() => clearInterval(timerId));
 
 /* Left Panel */
 .left-panel { background: var(--bg-panel); border-radius: 1rem; border: 1px solid var(--border-color); padding: 1.5rem; overflow-y: auto; }
-.station-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.station-card { background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
-.station-card.current { border-color: var(--brand-yellow); box-shadow: 0 0 20px rgba(253, 224, 71, 0.2); }
-.station-card__header { display: flex; align-items: center; gap: 0.75rem; }
-.station-number { width: 28px; height: 28px; border-radius: 50%; background: var(--surface-3); color: var(--text-muted); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem; flex-shrink: 0; }
+.station-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
+.station-card { background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 16px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1.25rem; box-shadow: 0 15px 25px -20px rgba(0,0,0,0.65); transition: border-color 0.2s ease, transform 0.2s ease; }
+.station-card.current { border-color: var(--brand-yellow); transform: translateY(-2px); box-shadow: 0 20px 30px -18px rgba(253, 224, 71, 0.25); }
+.station-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.station-card__title { display: flex; gap: 0.75rem; align-items: center; }
+.station-number { width: 34px; height: 34px; border-radius: 10px; background: rgba(255,255,255,0.05); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.95rem; flex-shrink: 0; }
 .station-card.current .station-number { background: var(--brand-yellow); color: var(--bg-main); }
-.station-card h3 { margin: 0; font-size: 1rem; font-weight: 600; }
-.shared-badge { font-size: 0.7rem; background: #3b82f6; padding: 0.1rem 0.5rem; border-radius: 999px; margin-left: auto; }
-.station-card__tasks { display: flex; flex-direction: column; gap: 0.25rem; }
-.task-line { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
-.task-label { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); }
-.task-text { color: var(--text-secondary); }
-.station-card__roster { margin-top: auto; padding-top: 0.5rem; border-top: 1px solid var(--border-color); }
-.roster-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
-.roster-chips span { padding: 0.1rem 0.4rem; border-radius: 4px; background: var(--surface-3); color: var(--text-secondary); font-size: 0.75rem; font-weight: 600; }
-.roster-empty { color: var(--text-muted); font-size: 0.75rem; }
+.station-card h3 { margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-primary); }
+.station-category { margin: 0.25rem 0 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+.shared-badge { font-size: 0.75rem; background: rgba(59, 130, 246, 0.16); padding: 0.25rem 0.75rem; border-radius: 999px; color: #93c5fd; font-weight: 600; }
+.station-card__body { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; }
+.task-card { background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.08); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+.task-heading { margin: 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 700; }
+.task-detail { margin: 0; font-size: 1rem; font-weight: 600; line-height: 1.4; color: var(--text-secondary); }
+.task-subtext { margin: 0; font-size: 0.75rem; color: var(--text-muted); }
+.station-card__roster { margin-top: auto; padding-top: 1rem; border-top: 1px solid rgba(148, 163, 184, 0.12); display: flex; flex-direction: column; gap: 0.5rem; }
+.roster-label { margin: 0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
+.roster-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.roster-chips span { padding: 0.25rem 0.5rem; border-radius: 8px; background: rgba(148, 163, 184, 0.12); color: var(--text-primary); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; }
+.roster-empty { color: var(--text-muted); font-style: italic; }
 
 /* Right Panel */
 .right-panel { background: var(--bg-panel); border-radius: 1rem; border: 1px solid var(--border-color); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem; }
