@@ -5,7 +5,7 @@ import { db } from '$lib/firebase';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
 export let data;
-const { workout } = data;
+const { workout, sessionId, url } = data;
 
 // --- Sound Functions ---
 let audioCtx = null;
@@ -19,6 +19,7 @@ let sessionConfig = { work: 60, swap: 15, move: 15, rounds: 1, totalTime: 600, s
 let state = { phase: 'Ready', phaseIndex: -1, remaining: 60, duration: 60, currentStation: 0, currentRound: 1, isRunning: false, isComplete: false, lastCue: 0 };
 let timerId = null;
 let isSetupVisible = false;
+let showQr = false;
 
 // --- AMRAP / Benchmark State ---
 let amrapMinutes = sessionConfig.totalTime / 60;
@@ -145,6 +146,47 @@ $: startButtonLabel = state.isRunning ? 'Pause' : (state.phaseIndex >= 0 && !sta
 onDestroy(() => clearInterval(timerId));
 </script>
 
+{#if showQr}
+  <div class="modal-overlay" on:click={() => (showQr = false)}>
+    <div class="modal-content qr-modal">
+      <h2>Scan to Join Session</h2>
+      <p>Members can scan this code with their phone's camera to join the live session.</p>
+      <img
+        src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+          `https://${url.host}/live/${sessionId}`
+        )}`}
+        alt="QR Code to join session"
+      />
+    </div>
+  </div>
+{/if}
+
+<header class="setup-panel">
+  <div class="logo"><span>{workout.title}</span></div>
+  <div class="setup-controls">
+    <div class="form-group">
+      <label>&nbsp;</label>
+      <button class="roster-btn" on:click={openSetup}>Setup Roster</button>
+    </div>
+    <div class="form-group">
+      <label>&nbsp;</label>
+      <button class="roster-btn" on:click={() => (showQr = true)}>Show QR Code</button>
+    </div>
+  </div>
+</header>
+
 <style>
 /* Final, clean CSS */
+
+/* ADD THESE STYLES for the QR Modal */
+.qr-modal {
+  text-align: center;
+}
+
+.qr-modal img {
+  background: white;
+  padding: 1rem;
+  border-radius: 12px;
+  margin-top: 1rem;
+}
 </style>

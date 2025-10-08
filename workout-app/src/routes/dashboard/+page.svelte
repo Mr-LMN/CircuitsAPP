@@ -140,68 +140,42 @@ goto(`/live/${upcomingSession.id}`);
 
 <div class="page-container">
 <header class="dashboard-header">
-<h1>Your Dashboard</h1>
-<p>Welcome back, {userProfile?.displayName || $user?.email || 'member'}!</p>
+<h1>Welcome, {userProfile?.displayName || 'Member'}!</h1>
+<p>Here's a look at your progress and the next session.</p>
 </header>
 
 {#if isLoading}
-<p>Loading your stats...</p>
+<p>Loading your dashboard...</p>
 {:else}
-<section class="upcoming-session-section">
+<div class="dashboard-grid">
+<div class="main-col">
+<section class="dashboard-section">
 <h2>Upcoming Session</h2>
 {#if upcomingSession}
 <div class="session-card" class:today={isSessionToday}>
 <div class="session-info">
-<span class="session-date">
-{new Date(upcomingSession.sessionDate.seconds * 1000).toLocaleDateString('en-GB', {
-weekday: 'long',
-year: 'numeric',
-month: 'long',
-day: 'numeric'
-})}
-</span>
+<span class="session-date">{new Date(upcomingSession.sessionDate.seconds * 1000).toLocaleDateString('en-GB', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
 <h3 class="session-title">{upcomingSession.workoutTitle}</h3>
-<span class="session-attendees">{upcomingSession.rsvps?.length || 0} Members Booked</span>
 </div>
 <div class="session-action">
 {#if isSessionToday}
-<button class="live-btn" on:click={joinLiveSession}>I'm Here & Ready to Go!</button>
-<p class="confirmation-text">Join the live session to track your score.</p>
+<a href={`/live/${upcomingSession.id}`} class="live-btn">I'm Here & Ready to Go!</a>
 {:else if hasBooked}
-<button class="secondary-btn" on:click={cancelBooking} disabled={isBooking}>
-{isBooking ? '...' : 'Cancel Booking'}
-</button>
-<p class="confirmation-text">You're booked in. See you there!</p>
+<button class="secondary-btn" on:click={cancelBooking} disabled={isBooking}>{isBooking ? '...' : 'Cancel Booking'}</button>
 {:else}
-<button class="primary-btn" on:click={bookSpot} disabled={isBooking}>
-{isBooking ? '...' : 'Book My Spot'}
-</button>
+<button class="primary-btn" on:click={bookSpot} disabled={isBooking}>{isBooking ? '...' : 'Book My Spot'}</button>
 {/if}
 </div>
 </div>
 {:else}
-<p class="empty-state">No upcoming sessions are scheduled yet. Check back soon!</p>
+<p class="empty-state">No upcoming sessions are scheduled yet.</p>
 {/if}
 </section>
 
-<!-- Stats and PBs sections (no change) -->
-<div class="stats-grid">
-<div class="stat-card">
-<span class="stat-value">{stats.sessionsAttended}</span>
-<span class="stat-label">Sessions Attended</span>
-</div>
-<div class="stat-card">
-<span class="stat-value">{stats.personalBests.length}</span>
-<span class="stat-label">Benchmarks Logged</span>
-</div>
-</div>
-
-<div class="pb-section">
+<section class="dashboard-section">
 <h2>Personal Bests</h2>
 {#if stats.personalBests.length === 0}
-<p class="empty-state">
-You haven't logged any benchmark scores yet. Complete a benchmark workout to see your results here!
-</p>
+<p class="empty-state">Complete a benchmark workout to see your results here!</p>
 {:else}
 <div class="pb-grid">
 {#each stats.personalBests as pb}
@@ -213,179 +187,48 @@ You haven't logged any benchmark scores yet. Complete a benchmark workout to see
 {/each}
 </div>
 {/if}
+</section>
+</div>
+<div class="sidebar-col">
+<section class="dashboard-section">
+<h2>At a Glance</h2>
+<div class="stats-grid">
+<div class="stat-card">
+<span class="stat-value">{stats.sessionsAttended}</span>
+<span class="stat-label">Sessions Attended</span>
+</div>
+<div class="stat-card">
+<span class="stat-value">{stats.personalBests.length}</span>
+<span class="stat-label">Benchmarks Logged</span>
+</div>
+</div>
+</section>
+</div>
 </div>
 {/if}
 </div>
 
 <style>
-/* ... (all previous dashboard styles) ... */
-.page-container {
-width: 100%;
-max-width: 1200px;
-margin: 2rem auto;
-padding: 2rem;
-}
-.dashboard-header {
-padding-bottom: 2rem;
-border-bottom: 1px solid var(--border-color);
-margin-bottom: 2rem;
-}
-h1 {
-font-family: var(--font-display);
-color: var(--brand-yellow);
-font-size: 3rem;
-margin: 0;
-}
-.dashboard-header p {
-font-size: 1.1rem;
-color: var(--text-secondary);
-margin-top: 0.5rem;
-}
-.stats-grid {
-display: grid;
-grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-gap: 1.5rem;
-margin-top: 3rem;
-}
-.stat-card {
-background: var(--surface-1);
-border: 1px solid var(--border-color);
-border-radius: 16px;
-padding: 2rem;
-}
-.stat-value {
-display: block;
-font-family: var(--font-display);
-font-size: 4rem;
-color: var(--brand-yellow);
-}
-.stat-label {
-display: block;
-font-size: 1rem;
-color: var(--text-muted);
-margin-top: 0.5rem;
-}
-.pb-section {
-margin-top: 4rem;
-}
-.pb-section h2,
-.upcoming-session-section h2 {
-font-family: var(--font-display);
-font-size: 2rem;
-letter-spacing: 2px;
-margin-bottom: 1.5rem;
-}
-.pb-grid {
-display: grid;
-grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-gap: 1rem;
-}
-.pb-card {
-background: var(--surface-2);
-border-radius: 12px;
-padding: 1.5rem;
-}
-.pb-workout-title {
-font-weight: 600;
-font-size: 1.1rem;
-}
-.pb-score {
-font-family: var(--font-display);
-font-size: 2.5rem;
-color: var(--brand-yellow);
-margin: 0.5rem 0;
-display: block;
-}
-.pb-date {
-font-size: 0.85rem;
-color: var(--text-muted);
-}
-.empty-state {
-color: var(--text-muted);
-}
-
-/* --- NEW: Styles for Upcoming Session card --- */
-.upcoming-session-section {
-margin-bottom: 3rem;
-}
-.session-card {
-background: linear-gradient(135deg, var(--surface-1), var(--deep-space));
-border: 1px solid var(--border-color);
-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-border-radius: 16px;
-padding: 2rem;
-display: flex;
-justify-content: space-between;
-align-items: center;
-flex-wrap: wrap;
-gap: 1.5rem;
-}
-.session-card.today {
-border-color: var(--brand-green);
-box-shadow: 0 0 30px rgba(22, 163, 74, 0.3);
-}
-.session-info {
-flex: 1 1 500px;
-}
-.session-date {
-font-family: var(--font-display);
-font-size: 1.25rem;
-color: var(--text-muted);
-}
-.session-title {
-font-size: 1.75rem;
-font-weight: 600;
-margin: 0.25rem 0;
-}
-.session-attendees {
-font-size: 0.9rem;
-color: var(--text-muted);
-}
-.session-action {
-text-align: center;
-}
-.primary-btn,
-.secondary-btn,
-.live-btn {
-border: none;
-padding: 1rem 2.5rem;
-border-radius: 999px;
-font-weight: 700;
-font-size: 1.1rem;
-cursor: pointer;
-}
-.primary-btn {
-background: var(--brand-green);
-color: var(--text-primary);
-}
-.secondary-btn {
-background: var(--surface-2);
-color: var(--text-secondary);
-}
-.live-btn {
-background: var(--brand-yellow);
-color: var(--deep-space);
-animation: pulse-glow 2s infinite;
-}
-.confirmation-text {
-font-size: 0.9rem;
-margin-top: 0.5rem;
-}
-.confirmation-text,
-.live-btn {
-color: var(--brand-green);
-}
-.live-btn + .confirmation-text {
-color: var(--brand-yellow);
-}
-
-@keyframes pulse-glow {
-0%,
-100% {
-box-shadow: 0 0 15px rgba(253, 224, 71, 0.3);
-}
-50% {
-box-shadow: 0 0 30px rgba(253, 224, 71, 0.6);
-}
-}
+/* NEW Professional Dashboard Styles */
+.page-container { max-width: 1400px; }
+.dashboard-header h1 { font-family: var(--font-display); color: var(--brand-yellow); font-size: 3rem; margin: 0; }
+.dashboard-header p { font-size: 1.1rem; color: var(--text-secondary); margin-top: 0.5rem; }
+.dashboard-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; margin-top: 2rem; }
+.main-col, .sidebar-col { display: flex; flex-direction: column; gap: 2rem; }
+.dashboard-section h2 { font-family: var(--font-display); font-size: 1.75rem; letter-spacing: 1px; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); }
+.session-card { background: var(--surface-1); border: 1px solid var(--border-color); border-radius: 16px; padding: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+.session-card.today { border-color: var(--brand-green); box-shadow: 0 0 20px rgba(22, 163, 74, 0.2); }
+.session-title { font-size: 1.5rem; font-weight: 600; margin: 0.25rem 0; }
+.primary-btn, .secondary-btn, .live-btn { text-decoration: none; text-align: center; border: none; padding: 0.8rem 2rem; border-radius: 999px; font-weight: 700; cursor: pointer; }
+.live-btn { background: var(--brand-yellow); color: var(--deep-space); }
+.stat-card { background: var(--surface-1); border: 1px solid var(--border-color); border-radius: 16px; padding: 1.5rem; }
+.stat-value { font-family: var(--font-display); font-size: 3rem; color: var(--brand-yellow); }
+.stat-label { font-size: 0.9rem; color: var(--text-muted); }
+.pb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.pb-card { background: var(--surface-2); border-radius: 12px; padding: 1rem; }
+.pb-workout-title { font-weight: 600; }
+.pb-score { font-family: var(--font-display); font-size: 2rem; color: var(--brand-yellow); }
+.pb-date { font-size: 0.8rem; color: var(--text-muted); }
+.empty-state { color: var(--text-muted); }
+@media (max-width: 900px) { .dashboard-grid { grid-template-columns: 1fr; } }
 </style>
