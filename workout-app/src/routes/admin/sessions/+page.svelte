@@ -165,9 +165,14 @@
 							<h3>{session.workoutTitle}</h3>
 							<p>{session.rsvps.length} Attendees Booked</p>
 						</div>
-						<div class="card-actions">
-							<a href={`/timer/${session.workoutId}`} class="start-btn">Start Session</a>
-						</div>
+                                                <div class="card-actions">
+                                                        <a
+                                                                href={`/timer/${session.workoutId}?session_id=${session.id}`}
+                                                                class="start-btn"
+                                                        >
+                                                                Start Session
+                                                        </a>
+                                                </div>
 					</div>
 				{/each}
 			</div>
