@@ -1,11 +1,10 @@
 <script>
 // @ts-nocheck
-import { onDestroy, onMount } from 'svelte';
-import { db } from '$lib/firebase';
-import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { onDestroy } from 'svelte';
 
 export let data;
-const { workout, url } = data;
+const { workout, sessionId } = data;
+const urlOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
 // --- Sound Functions ---
 let audioCtx = null;
@@ -23,7 +22,6 @@ currentStation: 0, currentRound: 1, isRunning: false, isComplete: false, lastCue
 let timerId = null;
 let isSetupVisible = false;
 let showQr = false;
-let sessionId = null;
 
 // --- Roster Logic ---
 let totalStations = workout.exercises?.length ?? 0;
@@ -45,15 +43,6 @@ return roster;
 $: progress = state.duration > 0 ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100)) : 0;
 $: totalTime = totalStations > 0 ? Math.round(((sessionConfig.work * 2 + sessionConfig.swap + sessionConfig.move) * totalStations * sessionConfig.rounds) / 60) : 0;
 $: startButtonLabel = state.isRunning ? 'Pause' : state.phaseIndex >= 0 && !state.isComplete ? 'Resume' : 'Start';
-
-onMount(async () => {
-// eslint-disable-next-line svelte/prefer-svelte-reactivity
-const startOfToday = new Date();
-startOfToday.setHours(0, 0, 0, 0);
-const sessionsQuery = query(collection(db, 'sessions'), where('workoutId', '==', workout.id), where('sessionDate', '>=', startOfToday), orderBy('sessionDate', 'asc'), limit(1));
-const sessionsSnapshot = await getDocs(sessionsQuery);
-if (!sessionsSnapshot.empty) { sessionId = sessionsSnapshot.docs[0].id; }
-});
 
 // --- Timer Core Functions ---
 function advancePhase() {
@@ -150,7 +139,7 @@ onDestroy(() => clearInterval(timerId));
 <div class="modal-content qr-modal">
 <h2>Scan to Join Live Session</h2>
 <p>Members can scan this with their phone to join.</p>
-<img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`${url.origin}/live/${sessionId}`)}`} alt="QR Code to join session" />
+<img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`${urlOrigin}/live/${sessionId}`)}`} alt="QR Code to join session" />
 </div>
 </div>
 {/if}
