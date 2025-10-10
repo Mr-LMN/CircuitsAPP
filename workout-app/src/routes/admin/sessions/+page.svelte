@@ -1,116 +1,110 @@
 <script>
-	// @ts-nocheck
-	import { onMount, onDestroy } from 'svelte';
-	import { db, auth } from '$lib/firebase';
-	import {
-		collection,
-		getDocs,
-		addDoc,
-		serverTimestamp,
-		query,
-		orderBy,
-		where,
-		doc,
-		deleteDoc,
-		onSnapshot
-	} from 'firebase/firestore';
+// @ts-nocheck
+import { onMount, onDestroy } from 'svelte';
+import { db, auth } from '$lib/firebase';
+import {
+collection,
+getDocs,
+addDoc,
+serverTimestamp,
+query,
+orderBy,
+where,
+doc,
+deleteDoc,
+onSnapshot
+} from 'firebase/firestore';
 
-	let allWorkouts = [];
-	let upcomingSessions = [];
-	let pastSessions = [];
-	let newSession = { date: '', workoutId: '' };
-	let isLoading = true;
-	let isSubmitting = false;
-	let searchTerm = '';
-	let unsubscribeSessions = () => {};
+let allWorkouts = [];
+let upcomingSessions = [];
+let pastSessions = [];
+let newSession = { date: '', workoutId: '' };
+let isLoading = true;
+let isSubmitting = false;
+let searchTerm = '';
+let unsubscribeSessions = () => {};
 
-	function formatDate(date) {
-		if (!date) return null;
-		if (date.seconds) {
-			return new Date(date.seconds * 1000);
-		}
-		const d = new Date(date);
-		return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-	}
+function formatDate(date) {
+if (!date) return null;
+if (date.seconds) {
+return new Date(date.seconds * 1000);
+}
+const d = new Date(date);
+return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
 
-	onMount(async () => {
-		const user = auth.currentUser;
-		if (!user) return;
+onMount(async () => {
+const user = auth.currentUser;
+if (!user) return;
 
-		const workoutsQuery = query(collection(db, 'workouts'), where('creatorId', '==', user.uid));
-		const workoutsSnapshot = await getDocs(workoutsQuery);
-		allWorkouts = workoutsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+const workoutsQuery = query(collection(db, 'workouts'), where('creatorId', '==', user.uid));
+const workoutsSnapshot = await getDocs(workoutsQuery);
+allWorkouts = workoutsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-		const sessionsQuery = query(
-			collection(db, 'sessions'),
-			where('creatorId', '==', user.uid),
-			orderBy('sessionDate', 'desc')
-		);
-		unsubscribeSessions = onSnapshot(sessionsQuery, (snapshot) => {
-			const allSessions = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-			const now = new Date();
+const sessionsQuery = query(
+collection(db, 'sessions'),
+where('creatorId', '==', user.uid),
+orderBy('sessionDate', 'desc')
+);
+unsubscribeSessions = onSnapshot(sessionsQuery, (snapshot) => {
+const allSessions = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-			upcomingSessions = allSessions
-				.filter((session) => {
-					const sessionDate = formatDate(session.sessionDate);
-					return sessionDate && sessionDate >= now;
-				})
-				.reverse();
+// --- THIS IS THE FIX ---
+// We define the 'start of today' to compare against, ignoring the current time.
+const startOfToday = new Date();
+startOfToday.setHours(0, 0, 0, 0);
 
-			pastSessions = allSessions.filter((session) => {
-				const sessionDate = formatDate(session.sessionDate);
-				return sessionDate && sessionDate < now;
-			});
+upcomingSessions = allSessions.filter((s) => formatDate(s.sessionDate) >= startOfToday).reverse(); // Shows nearest upcoming session first
+pastSessions = allSessions.filter((s) => formatDate(s.sessionDate) < startOfToday);
+// --- END OF FIX ---
 
-			isLoading = false;
-		});
-	});
+isLoading = false;
+});
+});
 
-	onDestroy(() => {
-		unsubscribeSessions();
-	});
+onDestroy(() => {
+unsubscribeSessions();
+});
 
-	async function createSession() {
-		if (!newSession.date || !newSession.workoutId || isSubmitting) {
-			alert('Please select a date and a workout.');
-			return;
-		}
-		isSubmitting = true;
+async function createSession() {
+if (!newSession.date || !newSession.workoutId || isSubmitting) {
+alert('Please select a date and a workout.');
+return;
+}
+isSubmitting = true;
+try {
+const selectedWorkout = allWorkouts.find((w) => w.id === newSession.workoutId);
+const sessionData = {
+creatorId: auth.currentUser.uid,
+sessionDate: formatDate(newSession.date),
+workoutId: selectedWorkout.id,
+workoutTitle: selectedWorkout.title,
+rsvps: [],
+createdAt: serverTimestamp()
+};
+await addDoc(collection(db, 'sessions'), sessionData);
+newSession = { date: '', workoutId: '' };
+} catch (error) {
+console.error('Error creating session:', error);
+alert('Failed to create session.');
+} finally {
+isSubmitting = false;
+}
+}
 
-		try {
-			const selectedWorkout = allWorkouts.find((w) => w.id === newSession.workoutId);
-			const sessionData = {
-				creatorId: auth.currentUser.uid,
-				sessionDate: formatDate(newSession.date),
-				workoutId: selectedWorkout.id,
-				workoutTitle: selectedWorkout.title,
-				rsvps: [],
-				createdAt: serverTimestamp()
-			};
-			await addDoc(collection(db, 'sessions'), sessionData);
-			newSession = { date: '', workoutId: '' };
-		} catch (error) {
-			console.error('Error creating session:', error);
-			alert('Failed to create session.');
-		} finally {
-			isSubmitting = false;
-		}
-	}
+async function deleteSession(sessionId) {
+if (!confirm('Are you sure you want to delete this session?')) return;
+try {
+await deleteDoc(doc(db, 'sessions', sessionId));
+} catch (error) {
+console.error('Error deleting session:', error);
+alert('Failed to delete session.');
+}
+}
 
-	async function deleteSession(sessionId) {
-		if (!confirm('Are you sure you want to delete this session?')) return;
-		try {
-			await deleteDoc(doc(db, 'sessions', sessionId));
-		} catch (error) {
-			console.error('Error deleting session:', error);
-			alert('Failed to delete session.');
-		}
-	}
-
-	$: filteredPastSessions = pastSessions.filter((session) => {
-		const title = session.workoutTitle ? session.workoutTitle.toLowerCase() : '';
-		return title.includes(searchTerm.toLowerCase());
-	});
+$: filteredPastSessions = pastSessions.filter((s) =>
+s.workoutTitle.toLowerCase().includes(searchTerm.toLowerCase())
+);
 </script>
 
 <div class="page-container">
