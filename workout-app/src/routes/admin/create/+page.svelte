@@ -5,9 +5,9 @@
   import { db, auth } from '$lib/firebase';
   import { collection, addDoc, serverTimestamp, getDocs, doc, setDoc } from 'firebase/firestore';
 
-  const FALLBACK_CATEGORIES = ['Bodyweight', 'Resistance', 'Cardio Machine'];
+  const FALLBACK_CATEGORIES = ['Bodyweight', 'Cardio Machine', 'Resistance'];
 
-  let categoryOptions = [...FALLBACK_CATEGORIES];
+  let categoryOptions = [...FALLBACK_CATEGORIES].sort((a, b) => a.localeCompare(b));
   let defaultCategory = categoryOptions[0];
 
   let title = '';
@@ -45,6 +45,7 @@
   let isLibraryOpen = false;
   let librarySearchTerm = '';
   let librarySearchInput;
+  let selectedLibraryIds = [];
   let isSubmitting = false;
   let successMessage = '';
   let errorMessage = '';
@@ -61,7 +62,10 @@
       )
     ).sort((a, b) => a.localeCompare(b));
 
-    categoryOptions = derivedCategories.length > 0 ? derivedCategories : [...FALLBACK_CATEGORIES];
+    categoryOptions =
+      derivedCategories.length > 0
+        ? derivedCategories
+        : [...FALLBACK_CATEGORIES].sort((a, b) => a.localeCompare(b));
     defaultCategory = categoryOptions[0];
 
     exercises =
@@ -178,17 +182,43 @@
 
   function openLibrary() {
     librarySearchTerm = '';
+    selectedLibraryIds = [];
     isLibraryOpen = true;
   }
 
   function closeLibrary() {
     isLibraryOpen = false;
     librarySearchTerm = '';
+    selectedLibraryIds = [];
   }
 
   function clearLibrarySearch() {
     librarySearchTerm = '';
     librarySearchInput?.focus?.();
+  }
+
+  function toggleLibrarySelection(libraryExerciseId) {
+    if (!libraryExerciseId) return;
+
+    selectedLibraryIds = selectedLibraryIds.includes(libraryExerciseId)
+      ? selectedLibraryIds.filter((id) => id !== libraryExerciseId)
+      : [...selectedLibraryIds, libraryExerciseId];
+  }
+
+  function importSelectedExercises() {
+    if (!selectedLibraryIds.length) return;
+
+    const exercisesById = new Map(exerciseLibrary.map((exercise) => [exercise.id, exercise]));
+
+    for (const exerciseId of selectedLibraryIds) {
+      const libraryExercise = exercisesById.get(exerciseId);
+
+      if (libraryExercise) {
+        addExerciseFromLibrary(libraryExercise);
+      }
+    }
+
+    closeLibrary();
   }
 
   function handleOverlayKeyDown(event) {
@@ -202,6 +232,7 @@
 
     if (
       event.currentTarget !== window &&
+      event.target === event.currentTarget &&
       (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar')
     ) {
       event.preventDefault();
@@ -359,15 +390,32 @@
         {:else}
           <div class="library-grid">
             {#each filteredLibrary as libraryExercise (libraryExercise.id)}
+              {@const isSelected = selectedLibraryIds.includes(libraryExercise.id)}
               <button
                 type="button"
                 class="library-item"
-                on:click={() => {
-                  addExerciseFromLibrary(libraryExercise);
-                  closeLibrary();
-                }}
+                class:selected={isSelected}
+                aria-pressed={isSelected}
+                on:click={() => toggleLibrarySelection(libraryExercise.id)}
               >
-                <span class="library-item-name">{libraryExercise.name}</span>
+                <div class="library-item-header">
+                  <span class="library-item-checkbox" aria-hidden="true">
+                    {#if isSelected}
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M16.704 5.29a1 1 0 0 1 0 1.42l-7.2 7.19a1 1 0 0 1-1.414 0l-3.2-3.19a1 1 0 1 1 1.414-1.42l2.493 2.48 6.493-6.48a1 1 0 0 1 1.414 0Z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    {/if}
+                  </span>
+                  <span class="library-item-name">{libraryExercise.name}</span>
+                </div>
                 <span class="library-item-category">{libraryExercise.category}</span>
                 {#if libraryExercise.equipment?.length}
                   <span class="library-item-equipment">
@@ -376,6 +424,25 @@
                 {/if}
               </button>
             {/each}
+          </div>
+          <div class="library-footer">
+            <span class="selection-count" aria-live="polite">
+              {#if selectedLibraryIds.length === 0}
+                No exercises selected
+              {:else if selectedLibraryIds.length === 1}
+                1 exercise selected
+              {:else}
+                {selectedLibraryIds.length} exercises selected
+              {/if}
+            </span>
+            <button
+              type="button"
+              class="primary-btn import-btn"
+              on:click={importSelectedExercises}
+              disabled={!selectedLibraryIds.length}
+            >
+              Add Selected
+            </button>
           </div>
         {/if}
       </div>
@@ -912,8 +979,8 @@
   .library-item {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 0.35rem;
+    align-items: stretch;
+    gap: 0.5rem;
     border-radius: 12px;
     border: 1px solid rgba(255, 255, 255, 0.06);
     background: linear-gradient(145deg, rgba(17, 24, 39, 0.92), rgba(17, 24, 39, 0.78));
@@ -922,6 +989,11 @@
     cursor: pointer;
     text-align: left;
     transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .library-item.selected {
+    border-color: rgba(247, 224, 120, 0.6);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
   }
 
   .library-item:hover {
@@ -933,6 +1005,35 @@
   .library-item:focus-visible {
     outline: 2px solid var(--brand-yellow);
     outline-offset: 3px;
+  }
+
+  .library-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+  }
+
+  .library-item-checkbox {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 8px;
+    border: 1.5px solid rgba(255, 255, 255, 0.16);
+    background: rgba(17, 24, 39, 0.75);
+    color: var(--brand-yellow);
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+
+  .library-item.selected .library-item-checkbox {
+    border-color: rgba(247, 224, 120, 0.9);
+    background: rgba(247, 224, 120, 0.15);
+  }
+
+  .library-item-checkbox svg {
+    width: 1rem;
+    height: 1rem;
   }
 
   .library-item-name {
@@ -947,6 +1048,28 @@
   .library-item-equipment {
     font-size: 0.75rem;
     color: var(--text-secondary);
+  }
+
+  .library-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+
+  .selection-count {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+  }
+
+  .import-btn {
+    align-self: flex-start;
+    padding-inline: 1.75rem;
+  }
+
+  .import-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .empty-state {
@@ -967,6 +1090,18 @@
     .submit-btn {
       width: 100%;
       align-self: stretch;
+    }
+  }
+
+  @media (min-width: 560px) {
+    .library-footer {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .import-btn {
+      align-self: unset;
     }
   }
 </style>
