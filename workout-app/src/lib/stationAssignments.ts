@@ -5,11 +5,22 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function sanitiseCodes(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((code) => typeof code === 'string' || typeof code === 'number')
-    .map((code) => String(code).toUpperCase())
-    .filter((code) => code.length > 0);
+  if (Array.isArray(value)) {
+    return value
+      .filter((code) => typeof code === 'string' || typeof code === 'number')
+      .map((code) => String(code).toUpperCase())
+      .filter((code) => code.length > 0);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.entries(value)
+      .filter(([, flag]) => Boolean(flag))
+      .map(([code]) => code)
+      .filter((code) => code.length > 0)
+      .map((code) => code.toUpperCase());
+  }
+
+  return [];
 }
 
 export function normaliseStationAssignments(
@@ -45,7 +56,12 @@ export function normaliseStationAssignments(
 export function serialiseStationAssignments(
   assignments: StationAssignmentsInput,
   totalStations?: number
-): Record<string, string[]> {
+): Record<string, Record<string, boolean>> {
   const normalised = normaliseStationAssignments(assignments, totalStations);
-  return Object.fromEntries(normalised.map((codes, index) => [String(index), [...codes]]));
+  return Object.fromEntries(
+    normalised.map((codes, index) => [
+      String(index),
+      Object.fromEntries(codes.map((code) => [code, true]))
+    ])
+  );
 }
