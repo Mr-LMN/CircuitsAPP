@@ -186,6 +186,11 @@
     librarySearchTerm = '';
   }
 
+  function clearLibrarySearch() {
+    librarySearchTerm = '';
+    librarySearchInput?.focus?.();
+  }
+
   function handleOverlayKeyDown(event) {
     if (!isLibraryOpen) return;
 
@@ -306,12 +311,48 @@
           <h2>Add from Exercise Library</h2>
           <button type="button" class="close-btn" on:click={closeLibrary}>&times;</button>
         </header>
-        <input
-          type="search"
-          bind:value={librarySearchTerm}
-          placeholder="Search exercises..."
-          bind:this={librarySearchInput}
-        />
+        <div class="library-toolbar">
+          <div class="search-bar">
+            <svg
+              class="search-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                fill="currentColor"
+                d="M15.5 14h-.79l-.28-.27a6 6 0 1 0-.71.71l.27.28v.79l4.75 4.74a1 1 0 0 0 1.41-1.41zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8"
+              />
+            </svg>
+            <input
+              type="search"
+              bind:value={librarySearchTerm}
+              placeholder="Search exercises..."
+              aria-label="Search exercises"
+              bind:this={librarySearchInput}
+            />
+            {#if librarySearchTerm.trim().length}
+              <button
+                type="button"
+                class="clear-search"
+                on:click={clearLibrarySearch}
+                aria-label="Clear search term"
+              >
+                <span aria-hidden="true">&times;</span>
+              </button>
+            {/if}
+          </div>
+
+          <span class="result-count" aria-live="polite">
+            {#if librarySearchTerm.trim().length === 0}
+              {exerciseLibrary.length} exercises available
+            {:else if filteredLibrary.length === 0}
+              No matches
+            {:else}
+              {filteredLibrary.length} match{filteredLibrary.length === 1 ? '' : 'es'}
+            {/if}
+          </span>
+        </div>
 
         {#if filteredLibrary.length === 0}
           <p class="empty-state">No exercises found. Try a different search.</p>
@@ -729,21 +770,25 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.55);
-    padding: 2rem;
+    background: rgba(5, 8, 15, 0.78);
+    backdrop-filter: blur(4px);
+    padding: clamp(1.5rem, 4vw, 3rem);
     z-index: 10;
   }
 
   .modal-content {
-    width: min(680px, 100%);
+    width: min(720px, 100%);
     background: var(--surface-1);
-    border-radius: 16px;
-    border: 1px solid var(--border-color);
-    padding: 2rem;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: clamp(1.5rem, 4vw, 2.25rem);
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
+    gap: 1.5rem;
     position: relative;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+    max-height: min(720px, calc(100vh - 4rem));
+    overflow: hidden;
   }
 
   .modal-header {
@@ -765,12 +810,103 @@
     color: var(--brand-yellow);
   }
 
+  .library-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: rgba(17, 23, 34, 0.85);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .search-bar:focus-within {
+    border-color: var(--brand-yellow);
+    box-shadow: 0 0 0 3px rgba(247, 224, 120, 0.18);
+  }
+
+  .search-bar input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    outline: none;
+  }
+
+  .search-bar input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .search-icon {
+    width: 1.1rem;
+    height: 1.1rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .clear-search {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.25rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color 0.2s ease, background 0.2s ease;
+  }
+
+  .clear-search:hover,
+  .clear-search:focus-visible {
+    color: var(--brand-yellow);
+    background: rgba(247, 224, 120, 0.08);
+  }
+
+  .clear-search:focus-visible {
+    outline: 2px solid var(--brand-yellow);
+    outline-offset: 2px;
+  }
+
+  .result-count {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  @media (min-width: 560px) {
+    .library-toolbar {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .result-count {
+      text-align: right;
+    }
+  }
+
   .library-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 1rem;
-    max-height: 55vh;
+    max-height: clamp(320px, 55vh, 540px);
     overflow-y: auto;
+    padding-right: 0.25rem;
+  }
+
+  .library-grid::-webkit-scrollbar {
+    width: 0.4rem;
+  }
+
+  .library-grid::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
   }
 
   .library-item {
@@ -779,18 +915,24 @@
     align-items: flex-start;
     gap: 0.35rem;
     border-radius: 12px;
-    border: 1px solid var(--border-color);
-    background: var(--deep-space);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: linear-gradient(145deg, rgba(17, 24, 39, 0.92), rgba(17, 24, 39, 0.78));
     color: var(--text-primary);
     padding: 1rem;
     cursor: pointer;
     text-align: left;
-    transition: border-color 0.2s ease, transform 0.2s ease;
+    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   }
 
   .library-item:hover {
-    border-color: var(--brand-yellow);
+    border-color: rgba(247, 224, 120, 0.6);
     transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+  }
+
+  .library-item:focus-visible {
+    outline: 2px solid var(--brand-yellow);
+    outline-offset: 3px;
   }
 
   .library-item-name {
