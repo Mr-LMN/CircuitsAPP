@@ -2,7 +2,7 @@
 // @ts-nocheck
 import { onDestroy, onMount } from 'svelte';
 import { db } from '$lib/firebase';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 
 export let data;
 const { workout, sessionId } = data;
@@ -27,11 +27,22 @@ currentStation: 0, currentRound: 1, isRunning: false, isComplete: false, lastCue
 let timerId = null;
 let isSetupVisible = false;
 let showQr = false;
+let sessionUnsubscribe = null;
 
 // --- Roster Logic ---
 let totalStations = workout.exercises?.length ?? 0;
 let stationAssignments = (workout.exercises ?? []).map(() => []);
 let assignmentInputs = (workout.exercises ?? []).map(() => '');
+
+function normaliseStationAssignments(assignments = []) {
+ const total = workout.exercises?.length ?? 0;
+ return Array.from({ length: total }, (_, index) => {
+ const codes = Array.isArray(assignments[index]) ? assignments[index] : [];
+ return codes
+ .filter(Boolean)
+ .map((code) => String(code).toUpperCase());
+ });
+}
 function parseAssignments(value = '') { return value.split(/[\n,]/).map(c => c.trim()).filter(Boolean).map(c => c.toUpperCase()); }
 async function persistSessionSetup() {
 if (!sessionRef) return;
@@ -145,7 +156,10 @@ if (state.phaseIndex === -1) return;
 workoutComplete();
 }
 
-onDestroy(() => clearInterval(timerId));
+onDestroy(() => {
+ clearInterval(timerId);
+ sessionUnsubscribe?.();
+});
 
 onMount(async () => {
 if (!sessionRef || !liveStateRef) return;
@@ -157,13 +171,30 @@ if (sessionData?.timing) {
 sessionConfig = { ...sessionConfig, ...sessionData.timing };
 }
 if (Array.isArray(sessionData?.stationAssignments)) {
-stationAssignments = sessionData.stationAssignments.map((codes = []) => codes.map((code) => code.toUpperCase()));
-assignmentInputs = stationAssignments.map((codes) => codes.join(', '));
+const normalised = normaliseStationAssignments(sessionData.stationAssignments);
+stationAssignments = normalised;
+assignmentInputs = normalised.map((codes) => codes.join(', '));
 }
 }
 } catch (error) {
 console.error('Failed to load session setup', error);
 }
+
+sessionUnsubscribe = onSnapshot(sessionRef, (snap) => {
+ if (!snap.exists()) return;
+ const sessionData = snap.data();
+ if (sessionData?.timing) {
+ sessionConfig = { ...sessionConfig, ...sessionData.timing };
+ }
+if (Array.isArray(sessionData?.stationAssignments)) {
+const normalised = normaliseStationAssignments(sessionData.stationAssignments);
+stationAssignments = normalised;
+if (!isSetupVisible) {
+assignmentInputs = normalised.map((codes) => codes.join(', '));
+}
+}
+broadcastLiveState(true);
+});
 
 try {
 await setDoc(liveStateRef, buildLivePayload(), { merge: true });
