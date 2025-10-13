@@ -2,7 +2,7 @@
 // @ts-nocheck
 import { onMount } from 'svelte';
 import { db } from '$lib/firebase';
-import { doc, onSnapshot, updateDoc, addDoc, serverTimestamp, collection, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, addDoc, serverTimestamp, collection, setDoc, runTransaction } from 'firebase/firestore';
 import { user } from '$lib/store';
 
 export let data;
@@ -15,6 +15,7 @@ let userProfile = {};
 let myCurrentStationIndex = -1;
 let myNextStationIndex = -1;
 let hasSavedFinalScore = false;
+let hasJoinedRoster = false;
 
 // This holds a structured score for every station in the workout
 let liveScores = workout.exercises.map(ex => ({
@@ -91,6 +92,56 @@ workoutTitle: workout.title,
 date: serverTimestamp(),
 exerciseScores: cleanedScores
 });
+}
+
+async function joinStationRoster() {
+ if (hasJoinedRoster || !$user?.uid) return;
+
+ const displayName = (userProfile.displayName || '').trim();
+ const totalStations = workout.exercises?.length ?? 0;
+ if (!displayName || totalStations === 0) return;
+
+ const uppercaseName = displayName.toUpperCase();
+ const sessionRef = doc(db, 'sessions', session.id);
+
+ try {
+ await runTransaction(db, async (transaction) => {
+ const snap = await transaction.get(sessionRef);
+ if (!snap.exists()) return;
+
+ const data = snap.data();
+ let assignments = Array.isArray(data?.stationAssignments)
+ ? data.stationAssignments.map((codes = []) => codes.filter(Boolean).map((code) => String(code).toUpperCase()))
+ : [];
+
+ if (assignments.length < totalStations) {
+ assignments = assignments.concat(Array.from({ length: totalStations - assignments.length }, () => []));
+ } else if (assignments.length > totalStations) {
+ assignments = assignments.slice(0, totalStations);
+ }
+
+ assignments = assignments.map((codes) => codes.filter((code) => code !== uppercaseName));
+
+ const counts = assignments.map((codes) => codes.length);
+ const minCount = counts.length ? Math.min(...counts) : 0;
+ let targetIndex = counts.findIndex((count) => count === minCount);
+ if (targetIndex === -1) {
+ targetIndex = 0;
+ }
+
+ assignments[targetIndex] = [...assignments[targetIndex], uppercaseName];
+
+ transaction.set(sessionRef, { stationAssignments: assignments }, { merge: true });
+ });
+
+ hasJoinedRoster = true;
+ } catch (error) {
+ console.error('Failed to join station roster', error);
+ }
+}
+
+$: if (userProfile.displayName && !hasJoinedRoster) {
+ void joinStationRoster();
 }
 
 $: if (userProfile.displayName) {
