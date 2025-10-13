@@ -1,10 +1,15 @@
 <script>
 // @ts-nocheck
-import { onDestroy } from 'svelte';
+import { onDestroy, onMount } from 'svelte';
+import { db } from '$lib/firebase';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export let data;
 const { workout, sessionId } = data;
 const urlOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+
+const sessionRef = sessionId ? doc(db, 'sessions', sessionId) : null;
+const liveStateRef = sessionId ? doc(db, 'sessions', sessionId, 'liveState', 'data') : null;
 
 // --- Sound Functions ---
 let audioCtx = null;
@@ -28,9 +33,18 @@ let totalStations = workout.exercises?.length ?? 0;
 let stationAssignments = (workout.exercises ?? []).map(() => []);
 let assignmentInputs = (workout.exercises ?? []).map(() => '');
 function parseAssignments(value = '') { return value.split(/[\n,]/).map(c => c.trim()).filter(Boolean).map(c => c.toUpperCase()); }
+async function persistSessionSetup() {
+if (!sessionRef) return;
+try {
+await setDoc(sessionRef, { timing: { ...sessionConfig }, stationAssignments }, { merge: true });
+} catch (error) {
+console.error('Failed to save session setup', error);
+}
+}
 function commitAllAssignments() {
 stationAssignments = stationAssignments.map((codes, i) => parseAssignments(assignmentInputs[i] ?? codes.join(', ')));
 assignmentInputs = stationAssignments.map(codes => codes.join(', '));
+void persistSessionSetup();
 }
 
 // --- Reactive Derivations ---
@@ -44,6 +58,48 @@ $: progress = state.duration > 0 ? Math.min(100, Math.max(0, ((state.duration - 
 $: totalTime = totalStations > 0 ? Math.round(((sessionConfig.work * 2 + sessionConfig.swap + sessionConfig.move) * totalStations * sessionConfig.rounds) / 60) : 0;
 $: startButtonLabel = state.isRunning ? 'Pause' : state.phaseIndex >= 0 && !state.isComplete ? 'Resume' : 'Start';
 
+function buildLivePayload(overrides = {}) {
+const safeStationIndex = totalStations > 0 ? Math.min(state.currentStation, totalStations - 1) : -1;
+const currentStation = safeStationIndex >= 0 ? workout.exercises?.[safeStationIndex] : null;
+
+return {
+phase: state.phase,
+phaseIndex: state.phaseIndex,
+remaining: Math.max(0, Math.round(state.remaining * 10) / 10),
+duration: Math.round(state.duration),
+isRunning: state.isRunning,
+isComplete: state.isComplete,
+currentStation: state.currentStation,
+currentRound: state.currentRound,
+movesCompleted,
+totalStations,
+timing: { ...sessionConfig },
+currentStationMeta: currentStation ? {
+index: safeStationIndex,
+name: currentStation.name,
+category: currentStation.category || 'Bodyweight',
+tasks: {
+p1: currentStation.p1?.task || currentStation.p1_task || currentStation.name,
+p2: currentStation.p2?.task || currentStation.p2_task || ''
+}
+} : null,
+stationAssignments: stationAssignments.map((codes = []) => [...codes]),
+updatedAt: serverTimestamp(),
+...overrides
+};
+}
+
+let lastBroadcast = 0;
+function broadcastLiveState(force = false, overrides = {}) {
+if (!liveStateRef) return;
+const now = Date.now();
+if (!force && now - lastBroadcast < 400) return;
+lastBroadcast = now;
+void setDoc(liveStateRef, buildLivePayload(overrides), { merge: true }).catch((error) => {
+console.error('Failed to broadcast live state', error);
+});
+}
+
 // --- Timer Core Functions ---
 function advancePhase() {
 if (state.isComplete || !totalStations) return;
@@ -52,7 +108,7 @@ if (workout.mode === 'Partner') {
 if (nextPhaseIndex === 0) { state.phaseIndex = 0; state.phase = 'WORK 1'; state.remaining = state.duration = sessionConfig.work; whistleBell(); } 
 else if (nextPhaseIndex === 1) { state.phaseIndex = 1; state.phase = 'SWAP'; state.remaining = state.duration = sessionConfig.swap; tone(420, 160); } 
 else if (nextPhaseIndex === 2) { state.phaseIndex = 2; state.phase = 'WORK 2'; state.remaining = state.duration = sessionConfig.work; whistleBell(); } 
-else if (nextPhaseIndex === 3) { state.phaseIndex = 3; state.phase = 'MOVE'; state.remaining = state.duration = sessionConfig.move; tone(420, 160); } 
+else if (nextPhaseIndex === 3) { state.phaseIndex = 3; state.phase = 'MOVE'; state.remaining = state.duration = sessionConfig.move; tone(420, 160); }
 else {
 state.currentStation++;
 if (state.currentStation >= totalStations) { state.currentStation = 0; state.currentRound++; if (state.currentRound > sessionConfig.rounds) { workoutComplete(); return; } }
@@ -63,15 +119,16 @@ state.currentStation++;
 if (state.currentStation >= totalStations) { workoutComplete(); return; }
 state.phase = `Round ${state.currentStation + 1}`; state.remaining = state.duration = sessionConfig.work; whistleBell();
 }
+broadcastLiveState(true);
 }
-function tick() { state.remaining -= 0.1; const secs = Math.ceil(state.remaining); if (secs <= 3 && secs >= 1 && secs !== state.lastCue) { state.lastCue = secs; countBeep(secs); } if (state.remaining <= 0) { advancePhase(); } state = state; }
-function startTimer() { if (state.isComplete || state.isRunning || totalStations === 0) return; if (state.phaseIndex === -1) { advancePhase(); } state.isRunning = true; timerId = setInterval(tick, 100); commitAllAssignments(); }
-function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); }
-function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; }
-function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); }
+function tick() { state.remaining -= 0.1; const secs = Math.ceil(state.remaining); if (secs <= 3 && secs >= 1 && secs !== state.lastCue) { state.lastCue = secs; countBeep(secs); } if (state.remaining <= 0) { advancePhase(); } state = state; broadcastLiveState(); }
+function startTimer() { if (state.isComplete || state.isRunning || totalStations === 0) return; if (state.phaseIndex === -1) { advancePhase(); } state.isRunning = true; timerId = setInterval(tick, 100); commitAllAssignments(); broadcastLiveState(true); }
+function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); broadcastLiveState(true); }
+function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; broadcastLiveState(true); }
+function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); broadcastLiveState(true); }
 
 function openSetup() { pauseTimer(); isSetupVisible = true; }
-function closeSetup() { commitAllAssignments(); isSetupVisible = false; }
+function closeSetup() { commitAllAssignments(); isSetupVisible = false; broadcastLiveState(true); }
 function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0')); }
 
 // NEW: Functions for new control buttons
@@ -81,6 +138,7 @@ const wasRunning = state.isRunning;
 pauseTimer();
 advancePhase();
 if (wasRunning && !state.isComplete) { startTimer(); }
+broadcastLiveState(true);
 }
 function finishWorkout() {
 if (state.phaseIndex === -1) return;
@@ -88,6 +146,31 @@ workoutComplete();
 }
 
 onDestroy(() => clearInterval(timerId));
+
+onMount(async () => {
+if (!sessionRef || !liveStateRef) return;
+try {
+const sessionSnap = await getDoc(sessionRef);
+if (sessionSnap.exists()) {
+const sessionData = sessionSnap.data();
+if (sessionData?.timing) {
+sessionConfig = { ...sessionConfig, ...sessionData.timing };
+}
+if (Array.isArray(sessionData?.stationAssignments)) {
+stationAssignments = sessionData.stationAssignments.map((codes = []) => codes.map((code) => code.toUpperCase()));
+assignmentInputs = stationAssignments.map((codes) => codes.join(', '));
+}
+}
+} catch (error) {
+console.error('Failed to load session setup', error);
+}
+
+try {
+await setDoc(liveStateRef, buildLivePayload(), { merge: true });
+} catch (error) {
+console.error('Failed to initialise live state', error);
+}
+});
 </script>
 
 <svelte:head>

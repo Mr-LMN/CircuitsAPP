@@ -1,8 +1,8 @@
 <script>
 // @ts-nocheck
-import { onMount, onDestroy } from 'svelte';
-import { db, auth } from '$lib/firebase';
-import { doc, onSnapshot, updateDoc, addDoc, serverTimestamp, collection, getDoc, setDoc } from 'firebase/firestore';
+import { onMount } from 'svelte';
+import { db } from '$lib/firebase';
+import { doc, onSnapshot, updateDoc, addDoc, serverTimestamp, collection, setDoc } from 'firebase/firestore';
 import { user } from '$lib/store';
 
 export let data;
@@ -58,10 +58,10 @@ return () => unsubscribe.forEach(unsub => unsub());
 
 async function updateLiveScore(scoreObject) {
 const userUid = $user?.uid;
-if (!userUid || !liveState.isRunning) return;
+if (!userUid || myCurrentStationIndex < 0) return;
 
 const myScoreRef = doc(db, 'sessions', session.id, 'attendees', userUid);
-await updateDoc(myScoreRef, { 
+await updateDoc(myScoreRef, {
 score: scoreObject,
 currentStation: myCurrentStationIndex + 1
 });
@@ -93,9 +93,11 @@ exerciseScores: cleanedScores
 });
 }
 
-$: if (userProfile.displayName && session.stationAssignments && liveState.movesCompleted !== undefined) {
+$: if (userProfile.displayName) {
+const assignments = liveState.stationAssignments ?? session.stationAssignments;
+if (assignments && liveState.movesCompleted !== undefined) {
 let myStartingIndex = -1;
-session.stationAssignments.forEach((roster, index) => {
+assignments.forEach((roster, index) => {
 if (roster.includes(userProfile.displayName?.toUpperCase())) {
 myStartingIndex = index;
 }
@@ -107,9 +109,18 @@ myCurrentStationIndex = (myStartingIndex + liveState.movesCompleted) % totalStat
 myNextStationIndex = (myCurrentStationIndex + 1) % totalStations;
 }
 }
+}
 
 $: myStationData = myCurrentStationIndex !== -1 ? workout.exercises[myCurrentStationIndex] : null;
 $: nextStationData = myNextStationIndex !== -1 ? workout.exercises[myNextStationIndex] : null;
+$: intervalDuration = liveState?.duration || liveState?.timing?.work || session?.timing?.work || null;
+$: metricLabel = myStationData
+        ? myStationData.category === 'Resistance'
+                ? 'Reps & Weight'
+                : myStationData.category === 'Cardio Machine'
+                ? 'Calories & Distance'
+                : 'Reps'
+        : '';
 
 function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0')); }
 </script>
@@ -118,12 +129,24 @@ function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(
 <header class="tracker-header">
 <h1>{liveState.phase}</h1>
 <div class="main-time">{formatTime(liveState.remaining)}</div>
+{#if (liveState.currentStationMeta?.category || intervalDuration)}
+<div class="phase-meta">
+{#if liveState.currentStationMeta?.category}<span class="phase-chip">{liveState.currentStationMeta.category}</span>{/if}
+{#if intervalDuration}<span class="phase-chip">Interval: {Math.round(intervalDuration)}s</span>{/if}
+</div>
+{/if}
 </header>
 
 {#if myStationData}
 <main class="tracker-main">
 <div class="score-card">
 <span class="score-label">Log Your Score</span>
+{#if metricLabel || intervalDuration}
+<div class="score-meta">
+{#if metricLabel}<span class="score-chip">{metricLabel}</span>{/if}
+{#if intervalDuration}<span class="score-chip">Interval: {Math.round(intervalDuration)}s</span>{/if}
+</div>
+{/if}
 {#if myStationData.category === 'Resistance'}
 <div class="input-row">
 <label><span>Reps</span><input type="number" placeholder="0" bind:value={liveScores[myCurrentStationIndex].score.reps} on:change={() => updateLiveScore(liveScores[myCurrentStationIndex].score)} /></label>
@@ -170,9 +193,13 @@ function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(
 .tracker-container { display: flex; flex-direction: column; height: 100vh; background: var(--deep-space); padding: 1.5rem; text-align: center; gap: 1rem; }
 .tracker-header h1 { font-family: var(--font-display); font-size: 2.5rem; color: var(--text-secondary); }
 .main-time { font-family: var(--font-display); font-size: 4rem; color: var(--brand-yellow); line-height: 1; }
+.phase-meta { margin-top: 0.5rem; display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap; }
+.phase-chip { background: var(--surface-1); border: 1px solid var(--border-color); border-radius: 999px; padding: 0.2rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 .tracker-main { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; width: 100%; }
 .score-card { background: var(--surface-1); width: 100%; max-width: 400px; padding: 1.5rem; border-radius: 16px; border: 1px solid var(--border-color); }
 .score-label { font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
+.score-meta { margin-top: 0.75rem; display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap; }
+.score-chip { background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-color); border-radius: 999px; padding: 0.3rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
 .input-row { display: flex; gap: 1rem; align-items: center; justify-content: center; margin-top: 0.5rem; }
 .input-row label { flex: 1; text-align: center; }
 .input-row label span { font-size: 0.8rem; color: var(--text-muted); }
