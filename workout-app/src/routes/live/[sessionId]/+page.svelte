@@ -2,6 +2,7 @@
 // @ts-nocheck
 import { onMount } from 'svelte';
 import { db } from '$lib/firebase';
+import { normaliseStationAssignments, serialiseStationAssignments } from '$lib/stationAssignments';
 import { doc, onSnapshot, updateDoc, addDoc, serverTimestamp, collection, setDoc, runTransaction } from 'firebase/firestore';
 import { user } from '$lib/store';
 
@@ -110,9 +111,7 @@ async function joinStationRoster() {
  if (!snap.exists()) return;
 
  const data = snap.data();
- let assignments = Array.isArray(data?.stationAssignments)
- ? data.stationAssignments.map((codes = []) => codes.filter(Boolean).map((code) => String(code).toUpperCase()))
- : [];
+ let assignments = normaliseStationAssignments(data?.stationAssignments, totalStations);
 
  if (assignments.length < totalStations) {
  assignments = assignments.concat(Array.from({ length: totalStations - assignments.length }, () => []));
@@ -129,9 +128,13 @@ async function joinStationRoster() {
  targetIndex = 0;
  }
 
- assignments[targetIndex] = [...assignments[targetIndex], uppercaseName];
+ assignments[targetIndex] = [...(assignments[targetIndex] ?? []), uppercaseName];
 
- transaction.set(sessionRef, { stationAssignments: assignments }, { merge: true });
+ transaction.set(
+ sessionRef,
+ { stationAssignments: serialiseStationAssignments(assignments, totalStations) },
+ { merge: true }
+ );
  });
 
  hasJoinedRoster = true;
@@ -145,8 +148,11 @@ $: if (userProfile.displayName && !hasJoinedRoster) {
 }
 
 $: if (userProfile.displayName) {
-const assignments = liveState.stationAssignments ?? session.stationAssignments;
-if (assignments && liveState.movesCompleted !== undefined) {
+const assignments = normaliseStationAssignments(
+ liveState.stationAssignments ?? session.stationAssignments,
+ workout.exercises.length
+);
+if (assignments.length && liveState.movesCompleted !== undefined) {
 let myStartingIndex = -1;
 assignments.forEach((roster, index) => {
 if (roster.includes(userProfile.displayName?.toUpperCase())) {

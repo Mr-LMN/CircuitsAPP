@@ -2,6 +2,7 @@
 // @ts-nocheck
 import { onDestroy, onMount } from 'svelte';
 import { db } from '$lib/firebase';
+import { normaliseStationAssignments, serialiseStationAssignments } from '$lib/stationAssignments';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 
 export let data;
@@ -33,21 +34,18 @@ let sessionUnsubscribe = null;
 let totalStations = workout.exercises?.length ?? 0;
 let stationAssignments = (workout.exercises ?? []).map(() => []);
 let assignmentInputs = (workout.exercises ?? []).map(() => '');
-
-function normaliseStationAssignments(assignments = []) {
- const total = workout.exercises?.length ?? 0;
- return Array.from({ length: total }, (_, index) => {
- const codes = Array.isArray(assignments[index]) ? assignments[index] : [];
- return codes
- .filter(Boolean)
- .map((code) => String(code).toUpperCase());
- });
-}
 function parseAssignments(value = '') { return value.split(/[\n,]/).map(c => c.trim()).filter(Boolean).map(c => c.toUpperCase()); }
 async function persistSessionSetup() {
 if (!sessionRef) return;
 try {
-await setDoc(sessionRef, { timing: { ...sessionConfig }, stationAssignments }, { merge: true });
+await setDoc(
+ sessionRef,
+ {
+ timing: { ...sessionConfig },
+ stationAssignments: serialiseStationAssignments(stationAssignments, totalStations)
+ },
+ { merge: true }
+ );
 } catch (error) {
 console.error('Failed to save session setup', error);
 }
@@ -94,7 +92,7 @@ p1: currentStation.p1?.task || currentStation.p1_task || currentStation.name,
 p2: currentStation.p2?.task || currentStation.p2_task || ''
 }
 } : null,
-stationAssignments: stationAssignments.map((codes = []) => [...codes]),
+stationAssignments: serialiseStationAssignments(stationAssignments, totalStations),
 updatedAt: serverTimestamp(),
 ...overrides
 };
@@ -170,8 +168,8 @@ const sessionData = sessionSnap.data();
 if (sessionData?.timing) {
 sessionConfig = { ...sessionConfig, ...sessionData.timing };
 }
-if (Array.isArray(sessionData?.stationAssignments)) {
-const normalised = normaliseStationAssignments(sessionData.stationAssignments);
+if (sessionData?.stationAssignments) {
+const normalised = normaliseStationAssignments(sessionData.stationAssignments, totalStations);
 stationAssignments = normalised;
 assignmentInputs = normalised.map((codes) => codes.join(', '));
 }
@@ -186,8 +184,8 @@ sessionUnsubscribe = onSnapshot(sessionRef, (snap) => {
  if (sessionData?.timing) {
  sessionConfig = { ...sessionConfig, ...sessionData.timing };
  }
-if (Array.isArray(sessionData?.stationAssignments)) {
-const normalised = normaliseStationAssignments(sessionData.stationAssignments);
+if (sessionData?.stationAssignments) {
+const normalised = normaliseStationAssignments(sessionData.stationAssignments, totalStations);
 stationAssignments = normalised;
 if (!isSetupVisible) {
 assignmentInputs = normalised.map((codes) => codes.join(', '));
