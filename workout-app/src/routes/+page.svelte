@@ -6,12 +6,22 @@
 		signInWithEmailAndPassword,
 		signOut
 	} from 'firebase/auth';
-	import { user } from '$lib/store';
+        import { user } from '$lib/store';
+        import { page } from '$app/stores';
 
 	let email = '';
 	let password = '';
 	let errorMessage = '';
-	let isNewUser = false;
+        let isNewUser = false;
+        let initializedFromQuery = false;
+
+        $: if (!initializedFromQuery) {
+                const signupParam = $page.url.searchParams.get('signup');
+                if (signupParam === '1') {
+                        isNewUser = true;
+                }
+                initializedFromQuery = true;
+        }
 
 	async function handleSubmit() {
 		if (!email || !password) {

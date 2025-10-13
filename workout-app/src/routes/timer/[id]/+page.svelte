@@ -137,9 +137,10 @@ onDestroy(() => clearInterval(timerId));
 {#if showQr && sessionId}
 <div class="modal-overlay" on:click|self={() => showQr = false}>
 <div class="modal-content qr-modal">
+<button class="modal-close" type="button" aria-label="Close QR code" on:click={() => showQr = false}>&times;</button>
 <h2>Scan to Join Live Session</h2>
 <p>Members can scan this with their phone to join.</p>
-<img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`${urlOrigin}/live/${sessionId}`)}`} alt="QR Code to join session" />
+<img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`${urlOrigin}/join/${sessionId}`)}`} alt="QR Code to join session" />
 </div>
 </div>
 {/if}
@@ -217,7 +218,11 @@ onDestroy(() => clearInterval(timerId));
 /* Modals */
 .modal-overlay { position: fixed; inset: 0; background: rgba(3, 7, 18, 0.85); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(10px); padding: 1.5rem; }
 .modal-content { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 24px; padding: 2rem 2.5rem; width: 100%; box-shadow: 0 35px 80px -20px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 1.75rem; max-height: 92vh; max-width: 960px; overflow: hidden; }
+.modal-content { position: relative; }
 .setup-modal { overflow: hidden; }
+.modal-close { position: absolute; top: 1rem; right: 1rem; background: transparent; border: none; color: var(--text-secondary); font-size: 2rem; line-height: 1; cursor: pointer; }
+.modal-close:hover { color: var(--text-primary); }
+.qr-modal { align-items: center; text-align: center; }
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem; }
 .modal-header h2 { font-family: var(--font-display); color: var(--brand-yellow); font-size: 2.5rem; letter-spacing: 1px; margin: 0; }
 .modal-header p { margin: 0.35rem 0 0; color: var(--text-secondary); }
