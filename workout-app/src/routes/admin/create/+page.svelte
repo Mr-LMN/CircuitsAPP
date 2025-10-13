@@ -5,8 +5,10 @@
   import { db, auth } from '$lib/firebase';
   import { collection, addDoc, serverTimestamp, getDocs, doc, setDoc } from 'firebase/firestore';
 
-  const CATEGORY_OPTIONS = ['Bodyweight', 'Resistance', 'Cardio Machine'];
-  const DEFAULT_CATEGORY = CATEGORY_OPTIONS[0];
+  const FALLBACK_CATEGORIES = ['Bodyweight', 'Resistance', 'Cardio Machine'];
+
+  let categoryOptions = [...FALLBACK_CATEGORIES];
+  let defaultCategory = categoryOptions[0];
 
   let title = '';
   let type = 'Circuit';
@@ -16,20 +18,20 @@
   let notes = '';
 
   function getDefaultIndividualExercise() {
-    return { name: '', description: '', category: DEFAULT_CATEGORY, equipment: [] };
+    return { name: '', description: '', category: defaultCategory, equipment: [] };
   }
 
   function getDefaultPartnerStation(index = 0) {
     return {
       name: `Station ${index + 1}`,
-      p1: { task: '', category: DEFAULT_CATEGORY, equipment: [] },
-      p2: { task: '', category: DEFAULT_CATEGORY, equipment: [] },
+      p1: { task: '', category: defaultCategory, equipment: [] },
+      p2: { task: '', category: defaultCategory, equipment: [] },
       startsOn: 'P1'
     };
   }
 
   function sanitizeCategory(category) {
-    return CATEGORY_OPTIONS.includes(category) ? category : DEFAULT_CATEGORY;
+    return categoryOptions.includes(category) ? category : defaultCategory;
   }
 
   function normalizeStartsOn(value) {
@@ -50,6 +52,29 @@
   onMount(async () => {
     const querySnapshot = await getDocs(collection(db, 'exercises'));
     exerciseLibrary = querySnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+
+    const derivedCategories = Array.from(
+      new Set(
+        exerciseLibrary
+          .map((exercise) => (typeof exercise.category === 'string' ? exercise.category.trim() : ''))
+          .filter((category) => category.length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    categoryOptions = derivedCategories.length > 0 ? derivedCategories : [...FALLBACK_CATEGORIES];
+    defaultCategory = categoryOptions[0];
+
+    exercises =
+      mode === 'Partner'
+        ? exercises.map((exercise) => ({
+            ...exercise,
+            p1: { ...exercise.p1, category: sanitizeCategory(exercise.p1?.category) },
+            p2: { ...exercise.p2, category: sanitizeCategory(exercise.p2?.category) }
+          }))
+        : exercises.map((exercise) => ({
+            ...exercise,
+            category: sanitizeCategory(exercise.category)
+          }));
   });
 
   $: allExerciseNames = Array.from(
@@ -392,7 +417,7 @@
                 />
                 <label for={`p1-cat-${index}`}>Category</label>
                 <select id={`p1-cat-${index}`} bind:value={exercise.p1.category}>
-                  {#each CATEGORY_OPTIONS as option}
+                  {#each categoryOptions as option}
                     <option>{option}</option>
                   {/each}
                 </select>
@@ -409,7 +434,7 @@
                 />
                 <label for={`p2-cat-${index}`}>Category</label>
                 <select id={`p2-cat-${index}`} bind:value={exercise.p2.category}>
-                  {#each CATEGORY_OPTIONS as option}
+                  {#each categoryOptions as option}
                     <option>{option}</option>
                   {/each}
                 </select>
@@ -440,7 +465,7 @@
               list="exercise-suggestions"
             />
             <select bind:value={exercise.category}>
-              {#each CATEGORY_OPTIONS as option}
+              {#each categoryOptions as option}
                 <option>{option}</option>
               {/each}
             </select>
