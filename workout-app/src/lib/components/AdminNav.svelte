@@ -3,10 +3,10 @@
 </script>
 
 <div class="admin-nav">
-	<button class="hamburger" on:click={() => (isOpen = !isOpen)}>
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			fill="none"
+        <button class="hamburger" on:click={() => (isOpen = !isOpen)} aria-label="Toggle admin navigation">
+                <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
 			viewBox="0 0 24 24"
 			stroke-width="2"
 			stroke="currentColor"
@@ -15,9 +15,9 @@
 		</svg>
 	</button>
 
-	{#if isOpen}
-		<div class="menu-overlay" on:click={() => (isOpen = false)}></div>
-		<div class="menu">
+        {#if isOpen}
+                <button type="button" class="menu-overlay" aria-label="Close admin navigation" on:click={() => (isOpen = false)}></button>
+                <div class="menu">
 			<h3>Admin Menu</h3>
 			<ul>
 				<li><a href="/dashboard" on:click={() => (isOpen = false)}>Dashboard</a></li>
@@ -58,11 +58,14 @@
 		width: 24px;
 		height: 24px;
 	}
-	.menu-overlay {
-		position: fixed;
-		inset: 0;
-		z-index: 48; /* Below the menu, above the page */
-	}
+        .menu-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 48; /* Below the menu, above the page */
+                background: transparent;
+                border: none;
+                cursor: pointer;
+        }
 	.menu {
 		position: absolute;
 		top: 60px;

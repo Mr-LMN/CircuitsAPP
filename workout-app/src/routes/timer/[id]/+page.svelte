@@ -409,7 +409,6 @@ console.error('Failed to initialise live state', error);
 </div>
 
 <style>
-:root { --font-body: 'Inter', sans-serif; --font-display: 'Bebas Neue', sans-serif; --brand-yellow: #fde047; --brand-green: #16a34a; --bg-main: #0f172a; --bg-panel: #111c32; --surface-1: rgba(255, 255, 255, 0.06); --surface-2: rgba(255, 255, 255, 0.08); --surface-3: rgba(255, 255, 255, 0.12); --border-color: rgba(255, 255, 255, 0.08); --text-primary: #f9fafb; --text-secondary: #cbd5f5; --text-muted: #94a3b8; }
 :global(body) { background-color: var(--bg-main); color: var(--text-primary); font-family: var(--font-body); }
 .blur { filter: blur(8px); }
 

@@ -12,7 +12,8 @@ export async function load({ params }) {
     if (!sessionSnap.exists()) {
         throw error(404, 'Session not found');
     }
-    const session = { id: sessionSnap.id, ...sessionSnap.data() };
+    const sessionData = /** @type {Record<string, any>} */ (sessionSnap.data());
+    const session = /** @type {Record<string, any>} */ ({ id: sessionSnap.id, ...sessionData });
 
     // --- THIS IS THE FIX ---
     // Check if the workoutId exists on the session before trying to fetch it

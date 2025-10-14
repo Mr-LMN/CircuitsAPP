@@ -46,8 +46,16 @@ collection(db, 'sessions'),
 where('creatorId', '==', user.uid),
 orderBy('sessionDate', 'desc')
 );
-unsubscribeSessions = onSnapshot(sessionsQuery, (snapshot) => {
-const allSessions = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        unsubscribeSessions = onSnapshot(sessionsQuery, (snapshot) => {
+                const allSessions = snapshot.docs.map((doc) => {
+                        const data = doc.data();
+                        return {
+                                id: doc.id,
+                                ...data,
+                                rsvps: data.rsvps ?? [],
+                                attendance: data.attendance ?? []
+                        };
+                });
 
 // --- THIS IS THE FIX ---
 // We define the 'start of today' to compare against, ignoring the current time.
@@ -75,12 +83,13 @@ isSubmitting = true;
 try {
 const selectedWorkout = allWorkouts.find((w) => w.id === newSession.workoutId);
 const sessionData = {
-creatorId: auth.currentUser.uid,
-sessionDate: formatDate(newSession.date),
-workoutId: selectedWorkout.id,
-workoutTitle: selectedWorkout.title,
-rsvps: [],
-createdAt: serverTimestamp()
+        creatorId: auth.currentUser.uid,
+        sessionDate: formatDate(newSession.date),
+        workoutId: selectedWorkout.id,
+        workoutTitle: selectedWorkout.title,
+        rsvps: [],
+        attendance: [],
+        createdAt: serverTimestamp()
 };
 await addDoc(collection(db, 'sessions'), sessionData);
 newSession = { date: '', workoutId: '' };
@@ -155,10 +164,10 @@ s.workoutTitle.toLowerCase().includes(searchTerm.toLowerCase())
 							</div>
 							<button class="delete-btn" on:click={() => deleteSession(session.id)}>&times;</button>
 						</div>
-						<div class="session-details">
-							<h3>{session.workoutTitle}</h3>
-							<p>{session.rsvps.length} Attendees Booked</p>
-						</div>
+                                                        <div class="session-details">
+                                                        <h3>{session.workoutTitle}</h3>
+                                                        <p>{session.rsvps?.length ?? 0} Attendees Booked</p>
+                                                </div>
                                                 <div class="card-actions">
                                                         <a
                                                                 href={`/timer/${session.workoutId}?session_id=${session.id}`}
@@ -186,19 +195,21 @@ s.workoutTitle.toLowerCase().includes(searchTerm.toLowerCase())
 			<div class="sessions-grid">
 				{#each filteredPastSessions as session}
 					{@const displayDate = formatDate(session.sessionDate)}
-					<div class="session-card past">
-						<div class="session-header">
-							<div class="session-date">
-								{#if displayDate}
-									<span>{displayDate.toLocaleDateString('en-GB')}</span>
-								{/if}
-							</div>
-							<button class="delete-btn" on:click={() => deleteSession(session.id)}>&times;</button>
-						</div>
-						<div class="session-details">
-							<h3>{session.workoutTitle}</h3>
-							<p>{session.rsvps.length} Attended</p>
-						</div>
+                                        <div class="session-card past">
+                                                <div class="session-header">
+                                                        <div class="session-date">
+                                                                {#if displayDate}
+                                                                        <span>{displayDate.toLocaleDateString('en-GB')}</span>
+                                                                {/if}
+                                                        </div>
+                                                        <button class="delete-btn" on:click={() => deleteSession(session.id)}>&times;</button>
+                                                </div>
+                                                <div class="session-details">
+                                                        <h3>{session.workoutTitle}</h3>
+                                                        <p class:empty={!session.attendance?.length}>
+                                                                {session.attendance?.length ?? 0} Attended
+                                                        </p>
+                                                </div>
 						<div class="card-actions">
 							<a href={`/admin/results/${session.id}`} class="secondary-btn">View Results</a>
 						</div>
@@ -278,9 +289,13 @@ s.workoutTitle.toLowerCase().includes(searchTerm.toLowerCase())
 		color: var(--brand-yellow);
 	}
 
-	.session-details {
-		flex-grow: 1;
-	}
+        .session-details {
+                flex-grow: 1;
+        }
+
+        .session-details p.empty {
+                color: var(--text-muted);
+        }
 
 	.session-details h3 {
 		font-size: 1.25rem;
