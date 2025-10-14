@@ -53,6 +53,7 @@ let sessionUnsubscribe = null;
 
 // --- Roster Logic ---
 let totalStations = workout.exercises?.length ?? 0;
+let totalTime = 0;
 let stationAssignments = (workout.exercises ?? []).map(() => []);
 let assignmentInputs = (workout.exercises ?? []).map(() => '');
 function parseAssignments(value = '') { return value.split(/[\n,]/).map(c => c.trim()).filter(Boolean).map(c => c.toUpperCase()); }
