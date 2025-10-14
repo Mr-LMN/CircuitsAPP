@@ -20,9 +20,30 @@ function whistleBell() { try { const ctx = getCtx(); for (let i = 0; i < 2; i +=
 function countBeep(n) { const f = { 3: 520, 2: 680, 1: 940 }; tone(f[n] || 720, 180, 'sine', 0.35); }
 
 // --- Session Config & Timer State ---
-let sessionConfig = { work: 60, swap: 15, move: 15, rounds: 1 };
+const DEFAULT_TIMING = { work: 60, swap: 15, move: 15, rounds: 1 };
+let sessionConfig = { ...DEFAULT_TIMING };
+
+function normaliseTimingValues(source = {}) {
+        const next = { ...DEFAULT_TIMING, ...sessionConfig };
+        ['work', 'swap', 'move'].forEach((key) => {
+                const value = Number(source[key]);
+                if (Number.isFinite(value)) {
+                        next[key] = Math.max(0, Math.round(value));
+                }
+        });
+        const roundsValue = Number(source.rounds);
+        if (Number.isFinite(roundsValue) && roundsValue > 0) {
+                next.rounds = Math.max(1, Math.round(roundsValue));
+        }
+        return next;
+}
+
+function timingValue(key) {
+        const value = Number(sessionConfig[key]);
+        return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
 let state = {
-phase: 'Ready', phaseIndex: -1, remaining: sessionConfig.work, duration: sessionConfig.work,
+phase: 'Ready', phaseIndex: -1, remaining: timingValue('work'), duration: timingValue('work'),
 currentStation: 0, currentRound: 1, isRunning: false, isComplete: false, lastCue: 0
 };
 let timerId = null;
@@ -38,10 +59,12 @@ function parseAssignments(value = '') { return value.split(/[\n,]/).map(c => c.t
 async function persistSessionSetup() {
 if (!sessionRef) return;
 try {
+const normalisedTiming = normaliseTimingValues(sessionConfig);
+sessionConfig = normalisedTiming;
 await setDoc(
  sessionRef,
  {
- timing: { ...sessionConfig },
+ timing: normalisedTiming,
  stationAssignments: serialiseStationAssignments(stationAssignments, totalStations)
  },
  { merge: true }
@@ -53,7 +76,12 @@ console.error('Failed to save session setup', error);
 function commitAllAssignments() {
 stationAssignments = stationAssignments.map((codes, i) => parseAssignments(assignmentInputs[i] ?? codes.join(', ')));
 assignmentInputs = stationAssignments.map(codes => codes.join(', '));
+sessionConfig = normaliseTimingValues(sessionConfig);
 void persistSessionSetup();
+if (state.phaseIndex === -1) {
+state.remaining = timingValue('work');
+state.duration = timingValue('work');
+}
 }
 
 // --- Reactive Derivations ---
@@ -64,7 +92,16 @@ stationAssignments.forEach((codes, startIndex) => { if (codes?.length) { const d
 return roster;
 });
 $: progress = state.duration > 0 ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100)) : 0;
-$: totalTime = totalStations > 0 ? Math.round(((sessionConfig.work * 2 + sessionConfig.swap + sessionConfig.move) * totalStations * sessionConfig.rounds) / 60) : 0;
+$: {
+        const roundsCount = Math.max(1, Math.round(Number(sessionConfig.rounds) || 1));
+        const workDuration = timingValue('work');
+        const swapDuration = timingValue('swap');
+        const moveDuration = timingValue('move');
+        const perStation = workout.mode === 'Partner'
+                ? workDuration * 2 + swapDuration + moveDuration
+                : workDuration + moveDuration;
+        totalTime = totalStations > 0 ? Math.round((perStation * totalStations * roundsCount) / 60) : 0;
+}
 $: startButtonLabel = state.isRunning ? 'Pause' : state.phaseIndex >= 0 && !state.isComplete ? 'Resume' : 'Start';
 
 function buildLivePayload(overrides = {}) {
@@ -82,7 +119,7 @@ currentStation: state.currentStation,
 currentRound: state.currentRound,
 movesCompleted,
 totalStations,
-timing: { ...sessionConfig },
+ timing: normaliseTimingValues(sessionConfig),
 currentStationMeta: currentStation ? {
 index: safeStationIndex,
 name: currentStation.name,
@@ -112,28 +149,69 @@ console.error('Failed to broadcast live state', error);
 // --- Timer Core Functions ---
 function advancePhase() {
 if (state.isComplete || !totalStations) return;
-state.lastCue = 0; const nextPhaseIndex = state.phaseIndex + 1;
+state.lastCue = 0;
+const nextPhaseIndex = state.phaseIndex + 1;
+const workDuration = Math.max(1, timingValue('work'));
+const swapDuration = timingValue('swap');
+const moveDuration = timingValue('move');
+const roundsCount = Math.max(1, Math.round(Number(sessionConfig.rounds) || 1));
+
 if (workout.mode === 'Partner') {
-if (nextPhaseIndex === 0) { state.phaseIndex = 0; state.phase = 'WORK 1'; state.remaining = state.duration = sessionConfig.work; whistleBell(); } 
-else if (nextPhaseIndex === 1) { state.phaseIndex = 1; state.phase = 'SWAP'; state.remaining = state.duration = sessionConfig.swap; tone(420, 160); } 
-else if (nextPhaseIndex === 2) { state.phaseIndex = 2; state.phase = 'WORK 2'; state.remaining = state.duration = sessionConfig.work; whistleBell(); } 
-else if (nextPhaseIndex === 3) { state.phaseIndex = 3; state.phase = 'MOVE'; state.remaining = state.duration = sessionConfig.move; tone(420, 160); }
+if (nextPhaseIndex === 0) {
+state.phaseIndex = 0;
+state.phase = 'WORK 1';
+state.remaining = state.duration = workDuration;
+whistleBell();
+}
+else if (nextPhaseIndex === 1) {
+state.phaseIndex = 1;
+state.phase = 'SWAP';
+state.remaining = state.duration = swapDuration;
+if (swapDuration > 0) { tone(420, 160); }
+if (swapDuration <= 0) { advancePhase(); return; }
+}
+else if (nextPhaseIndex === 2) {
+state.phaseIndex = 2;
+state.phase = 'WORK 2';
+state.remaining = state.duration = workDuration;
+whistleBell();
+}
+else if (nextPhaseIndex === 3) {
+state.phaseIndex = 3;
+state.phase = 'MOVE';
+state.remaining = state.duration = moveDuration;
+if (moveDuration > 0) {
+tone(420, 160);
+} else {
+advancePhase();
+return;
+}
+}
 else {
 state.currentStation++;
-if (state.currentStation >= totalStations) { state.currentStation = 0; state.currentRound++; if (state.currentRound > sessionConfig.rounds) { workoutComplete(); return; } }
-state.phaseIndex = 0; state.phase = 'WORK 1'; state.remaining = state.duration = sessionConfig.work; whistleBell();
+if (state.currentStation >= totalStations) {
+state.currentStation = 0;
+state.currentRound++;
+if (state.currentRound > roundsCount) { workoutComplete(); return; }
 }
-} else { // Fallback logic for Individual workouts
+state.phaseIndex = 0;
+state.phase = 'WORK 1';
+state.remaining = state.duration = workDuration;
+whistleBell();
+}
+} else {
 state.currentStation++;
 if (state.currentStation >= totalStations) { workoutComplete(); return; }
-state.phase = `Round ${state.currentStation + 1}`; state.remaining = state.duration = sessionConfig.work; whistleBell();
+state.phase = `Round ${state.currentStation + 1}`;
+state.remaining = state.duration = workDuration;
+whistleBell();
 }
 broadcastLiveState(true);
 }
 function tick() { state.remaining -= 0.1; const secs = Math.ceil(state.remaining); if (secs <= 3 && secs >= 1 && secs !== state.lastCue) { state.lastCue = secs; countBeep(secs); } if (state.remaining <= 0) { advancePhase(); } state = state; broadcastLiveState(); }
 function startTimer() { if (state.isComplete || state.isRunning || totalStations === 0) return; if (state.phaseIndex === -1) { advancePhase(); } state.isRunning = true; timerId = setInterval(tick, 100); commitAllAssignments(); broadcastLiveState(true); }
 function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); broadcastLiveState(true); }
-function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = sessionConfig.work; state.duration = sessionConfig.work; state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; broadcastLiveState(true); }
+function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = timingValue('work'); state.duration = timingValue('work'); state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; broadcastLiveState(true); }
 function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); broadcastLiveState(true); }
 
 function openSetup() { pauseTimer(); isSetupVisible = true; }
@@ -166,7 +244,11 @@ const sessionSnap = await getDoc(sessionRef);
 if (sessionSnap.exists()) {
 const sessionData = sessionSnap.data();
 if (sessionData?.timing) {
-sessionConfig = { ...sessionConfig, ...sessionData.timing };
+sessionConfig = normaliseTimingValues(sessionData.timing);
+if (state.phaseIndex === -1) {
+state.remaining = timingValue('work');
+state.duration = timingValue('work');
+}
 }
 if (sessionData?.stationAssignments) {
 const normalised = normaliseStationAssignments(sessionData.stationAssignments, totalStations);
@@ -182,7 +264,11 @@ sessionUnsubscribe = onSnapshot(sessionRef, (snap) => {
  if (!snap.exists()) return;
  const sessionData = snap.data();
  if (sessionData?.timing) {
- sessionConfig = { ...sessionConfig, ...sessionData.timing };
+ sessionConfig = normaliseTimingValues(sessionData.timing);
+ if (state.phaseIndex === -1) {
+ state.remaining = timingValue('work');
+ state.duration = timingValue('work');
+ }
  }
 if (sessionData?.stationAssignments) {
 const normalised = normaliseStationAssignments(sessionData.stationAssignments, totalStations);
