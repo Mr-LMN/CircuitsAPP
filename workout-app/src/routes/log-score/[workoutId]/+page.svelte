@@ -49,46 +49,31 @@
     const selectedProfile = profiles.find((p) => p.id === selectedUserId);
 
     try {
-      // --- NEW: Create a different data object based on workout type ---
       let scorePayload;
       if (workout.type === 'For Time') {
-        const trimmedTime = typeof timeScore === 'string' ? timeScore.trim() : timeScore;
-        scorePayload = { timeScore: trimmedTime };
+        scorePayload = { timeScore: timeScore };
       } else {
-        // Clean up the exercise scores to only include entered values
         const cleanedExerciseScores = exerciseScores
           .map((item) => {
             const cleanedScore = {};
-            const source = item.score || {};
-
-            const reps = Number(source.reps);
-            if (Number.isFinite(reps) && reps > 0) cleanedScore.reps = reps;
-
-            const weight = Number(source.weight);
-            if (Number.isFinite(weight) && weight > 0) cleanedScore.weight = weight;
-
-            const cals = Number(source.cals);
-            if (Number.isFinite(cals) && cals > 0) cleanedScore.cals = cals;
-
-            const formattedDist = formatDistance(source.dist);
-            if (formattedDist) cleanedScore.dist = formattedDist;
-
-            const notes = typeof source.notes === 'string' ? source.notes.trim() : '';
-            if (notes) cleanedScore.notes = notes;
-
+            for (const key in item.score) {
+              if (item.score[key] !== null && item.score[key] !== '') {
+                cleanedScore[key] = item.score[key];
+              }
+            }
             return { ...item, score: cleanedScore };
           })
           .filter((item) => Object.keys(item.score).length > 0);
-        
+
         scorePayload = { exerciseScores: cleanedExerciseScores };
       }
 
       const scoreData = {
-        userId: selectedProfile.id,
-        displayName: selectedProfile.displayName,
-        email: selectedProfile.email,
-        workoutId: workout.id,
-        workoutTitle: workout.title,
+        userId: selectedProfile?.id || 'unknown',
+        displayName: selectedProfile?.displayName || 'Unknown Member',
+        email: selectedProfile?.email || '',
+        workoutId: workout?.id || 'unknown',
+        workoutTitle: workout?.title || 'Untitled Workout',
         date: serverTimestamp(),
         ...scorePayload
       };
@@ -99,7 +84,11 @@
       // Reset form
       selectedUserId = '';
       timeScore = '';
-      exerciseScores = buildScoreState();
+      exerciseScores = workout.exercises.map((ex) => ({
+        stationName: ex.name,
+        category: ex.category,
+        score: { reps: null, weight: null, cals: null, dist: null, notes: null }
+      }));
 
     } catch (error) {
       console.error('Error saving score:', error);
