@@ -3,7 +3,18 @@
 import { onMount } from 'svelte';
 import { db } from '$lib/firebase';
 import { normaliseStationAssignments, serialiseStationAssignments } from '$lib/stationAssignments';
-import { doc, onSnapshot, addDoc, serverTimestamp, collection, setDoc, runTransaction, deleteDoc } from 'firebase/firestore';
+import {
+        doc,
+        onSnapshot,
+        addDoc,
+        serverTimestamp,
+        collection,
+        setDoc,
+        runTransaction,
+        deleteDoc,
+        updateDoc,
+        arrayUnion
+} from 'firebase/firestore';
 import { user } from '$lib/store';
 
 export let data;
@@ -50,6 +61,11 @@ let lastSaveType = 'idle';
 let finalSaveStatus = 'idle';
 let finalSaveMessage = '';
 let previousCompletionState = false;
+let totalTime = 0;
+
+let showFeedbackModal = false;
+let feedbackRating = 0;
+let feedbackComment = '';
 
 onMount(() => {
         const userUid = $user?.uid;
@@ -344,11 +360,56 @@ function hasTotals(index) {
         return ['reps', 'weight', 'cals'].some((key) => Number(totals[key]) > 0) || (totals.dist && totals.dist.trim());
 }
 
+function hasLoggedScores() {
+        return cumulativeScores.some((item) => {
+                const score = item?.score;
+                if (!score) return false;
+                return (
+                        Number(score.reps) > 0 ||
+                        Number(score.weight) > 0 ||
+                        Number(score.cals) > 0 ||
+                        (score.dist && String(score.dist).trim().length > 0)
+                );
+        });
+}
+
+function startUpload() {
+        if (finalSaveStatus === 'saving' || hasSavedFinalScore) return;
+        if (!hasLoggedScores()) {
+                finalSaveStatus = 'error';
+                finalSaveMessage = 'Log at least one score before uploading your workout.';
+                return;
+        }
+
+        feedbackRating = 0;
+        feedbackComment = '';
+        finalSaveStatus = 'idle';
+        finalSaveMessage = '';
+        showFeedbackModal = true;
+}
+
+function handleFeedbackSubmit(includeFeedback) {
+        if (!includeFeedback) {
+                feedbackRating = 0;
+                feedbackComment = '';
+        }
+        showFeedbackModal = false;
+        void saveFinalScores();
+}
+
+function cancelFeedback() {
+        showFeedbackModal = false;
+}
+
 async function saveFinalScores() {
         if (hasSavedFinalScore || !$user?.uid) return;
 
+        showFeedbackModal = false;
         finalSaveStatus = 'saving';
         finalSaveMessage = '';
+
+        const displayName = (userProfile.displayName ?? '').trim();
+        const resolvedDisplayName = displayName || userProfile.email || 'Member';
 
         const cleanedScores = cumulativeScores
                 .map((item) => {
@@ -373,12 +434,60 @@ async function saveFinalScores() {
         try {
                 await addDoc(collection(db, 'scores'), {
                         userId: $user.uid,
-                        displayName: userProfile.displayName,
+                        displayName: resolvedDisplayName,
+                        email: userProfile.email ?? '',
                         workoutId: workout.id,
                         workoutTitle: workout.title,
+                        sessionId: session.id,
+                        sessionDate: session.sessionDate ?? null,
+                        totalTimeMinutes: totalTime,
                         date: serverTimestamp(),
                         exerciseScores: cleanedScores
                 });
+
+                const attendanceRef = doc(db, 'attendance', `${session.id}_${$user.uid}`);
+                const attendanceWrite = setDoc(
+                        attendanceRef,
+                        {
+                                userId: $user.uid,
+                                displayName: resolvedDisplayName,
+                                email: userProfile.email ?? '',
+                                sessionId: session.id,
+                                workoutId: workout.id,
+                                workoutTitle: workout.title,
+                                sessionDate: session.sessionDate ?? null,
+                                date: serverTimestamp()
+                        },
+                        { merge: true }
+                );
+
+                const sessionRef = doc(db, 'sessions', session.id);
+                const sessionUpdate = updateDoc(sessionRef, {
+                        attendance: arrayUnion({
+                                userId: $user.uid,
+                                displayName: resolvedDisplayName,
+                                email: userProfile.email ?? ''
+                        })
+                });
+
+                const ratingValue = Number(feedbackRating);
+                const trimmedComment = feedbackComment.trim();
+                const hasRating = Number.isFinite(ratingValue) && ratingValue > 0;
+                const shouldRecordFeedback = hasRating || trimmedComment.length;
+
+                const writes = [attendanceWrite, sessionUpdate];
+
+                if (shouldRecordFeedback) {
+                        writes.push(
+                                addDoc(collection(db, 'sessions', session.id, 'feedback'), {
+                                        rating: hasRating ? ratingValue : null,
+                                        comment: trimmedComment,
+                                        createdAt: serverTimestamp()
+                                })
+                        );
+                }
+
+                await Promise.all(writes);
 
                 hasSavedFinalScore = true;
                 finalSaveStatus = 'success';
@@ -387,6 +496,9 @@ async function saveFinalScores() {
                 console.error('Error saving score:', error);
                 finalSaveStatus = 'error';
                 finalSaveMessage = 'Failed to upload workout. Please try again.';
+        } finally {
+                feedbackRating = 0;
+                feedbackComment = '';
         }
 }
 
@@ -699,7 +811,7 @@ function formatTime(s) {
                         <p>Upload your results to save them to your dashboard.</p>
                         <button
                                 class="btn btn-primary"
-                                on:click={saveFinalScores}
+                                on:click={startUpload}
                                 disabled={finalSaveStatus === 'saving' || hasSavedFinalScore}
                         >
                                 {hasSavedFinalScore ? 'Uploaded' : finalSaveStatus === 'saving' ? 'Uploading...' : 'Upload workout'}
@@ -709,25 +821,54 @@ function formatTime(s) {
                         {/if}
                 </section>
         {/if}
+
+        {#if showFeedbackModal}
+                <div class="feedback-overlay" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+                        <div class="feedback-card">
+                                <h3 id="feedback-title">How was that session?</h3>
+                                <p>Share anonymous feedback to help shape future workouts.</p>
+                                <div class="feedback-stars" role="group" aria-label="Rate this workout">
+                                        {#each [1, 2, 3, 4, 5] as star}
+                                                <button
+                                                        type="button"
+                                                        class="star-button"
+                                                        class:active={feedbackRating >= star}
+                                                        aria-label={`${star} star${star === 1 ? '' : 's'}`}
+                                                        aria-pressed={feedbackRating === star}
+                                                        on:click={() => (feedbackRating = star)}
+                                                >
+                                                        ★
+                                                </button>
+                                        {/each}
+                                </div>
+                                <textarea
+                                        aria-label="Optional feedback comments"
+                                        bind:value={feedbackComment}
+                                        placeholder="Add an optional comment (your name won't be shown)"
+                                ></textarea>
+                                <div class="feedback-actions">
+                                        <button type="button" class="btn btn-outline" on:click={cancelFeedback}>Cancel</button>
+                                        <button
+                                                type="button"
+                                                class="btn ghost"
+                                                on:click={() => handleFeedbackSubmit(false)}
+                                        >
+                                                Skip &amp; Upload
+                                        </button>
+                                        <button
+                                                type="button"
+                                                class="btn btn-primary"
+                                                on:click={() => handleFeedbackSubmit(true)}
+                                        >
+                                                Submit &amp; Upload
+                                        </button>
+                                </div>
+                        </div>
+                </div>
+        {/if}
 </div>
 
 <style>
-:root {
-        --font-body: 'Inter', sans-serif;
-        --font-display: 'Bebas Neue', sans-serif;
-        --brand-yellow: #fde047;
-        --brand-green: #16a34a;
-        --bg-main: #0f172a;
-        --bg-panel: #111c32;
-        --surface-1: rgba(255, 255, 255, 0.06);
-        --surface-2: rgba(255, 255, 255, 0.08);
-        --surface-3: rgba(255, 255, 255, 0.12);
-        --border-color: rgba(255, 255, 255, 0.08);
-        --text-primary: #f9fafb;
-        --text-secondary: #cbd5f5;
-        --text-muted: #94a3b8;
-}
-
 :global(body) {
         background-color: var(--bg-main);
         color: var(--text-primary);
@@ -1111,6 +1252,107 @@ function formatTime(s) {
 
 .post-workout-card .status.error {
         color: #f87171;
+}
+
+.feedback-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.75);
+        backdrop-filter: blur(6px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        z-index: 1200;
+}
+
+.feedback-card {
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        border-radius: 20px;
+        padding: 2rem;
+        width: 100%;
+        max-width: 420px;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        box-shadow: 0 30px 70px rgba(15, 23, 42, 0.45);
+}
+
+.feedback-card h3 {
+        margin: 0;
+        font-family: var(--font-display);
+        letter-spacing: 0.08em;
+        color: var(--brand-yellow);
+        font-size: 2.1rem;
+        text-transform: uppercase;
+}
+
+.feedback-card p {
+        margin: 0;
+        color: var(--text-secondary);
+}
+
+.feedback-stars {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: center;
+}
+
+.star-button {
+        background: transparent;
+        border: none;
+        color: rgba(148, 163, 184, 0.6);
+        font-size: 2.25rem;
+        cursor: pointer;
+        transition: transform var(--transition), color var(--transition);
+}
+
+.star-button.active,
+.star-button:hover,
+.star-button:focus-visible {
+        color: var(--brand-yellow);
+        transform: scale(1.05);
+        outline: none;
+}
+
+.feedback-card textarea {
+        background: var(--deep-space);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        color: var(--text-primary);
+        padding: 0.85rem 1rem;
+        min-height: 120px;
+        resize: vertical;
+        font-family: inherit;
+}
+
+.feedback-card textarea::placeholder {
+        color: rgba(148, 163, 184, 0.7);
+}
+
+.feedback-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: flex-end;
+}
+
+.feedback-actions .btn {
+        flex: 1;
+        min-width: 140px;
+}
+
+.btn.ghost {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+}
+
+.btn.ghost:not(:disabled):hover,
+.btn.ghost:focus-visible {
+        color: var(--text-primary);
+        border-color: var(--text-secondary);
 }
 
 @media (max-width: 640px) {
