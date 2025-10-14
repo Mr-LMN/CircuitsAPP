@@ -37,8 +37,22 @@ let rosterError = '';
 let myScoreRef = null;
 let unsubscribe = [];
 
-const createEntryScore = () => ({ reps: '', weight: '', cals: '', dist: '' });
-const createCumulativeScore = () => ({ reps: 0, weight: 0, cals: 0, dist: '' });
+const createEntryScore = () => ({ reps: '', weight: '', cals: '', dist: '', notes: '' });
+const createCumulativeScore = () => ({ reps: 0, weight: 0, cals: 0, dist: '', notes: '' });
+
+function formatDistance(value) {
+        if (!value) return '';
+        const trimmed = String(value).trim();
+        if (!trimmed) return '';
+        const lower = trimmed.toLowerCase();
+        if (lower.endsWith('m') || lower.endsWith('km')) {
+                return trimmed;
+        }
+        if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+                return `${trimmed}m`;
+        }
+        return trimmed;
+}
 
 let currentEntries = workout.exercises.map((ex) => ({
         stationName: ex.name,
@@ -120,7 +134,11 @@ function resetEntry(index) {
 
 function hasEntryValue(entry) {
         if (!entry) return false;
-        return ['reps', 'weight', 'cals'].some((key) => Number(entry[key]) > 0) || (entry.dist && entry.dist.trim().length > 0);
+        return (
+                ['reps', 'weight', 'cals'].some((key) => Number(entry[key]) > 0) ||
+                (entry.dist && entry.dist.trim().length > 0) ||
+                (entry.notes && entry.notes.trim().length > 0)
+        );
 }
 
 function handleEntryChange(index, field, rawValue) {
@@ -129,9 +147,11 @@ function handleEntryChange(index, field, rawValue) {
         const entry = { ...currentEntries[index].score };
         if (field === 'dist') {
                 entry.dist = rawValue;
+        } else if (field === 'notes') {
+                entry.notes = rawValue;
         } else {
                 const numeric = Number(rawValue);
-                entry[field] = rawValue === '' ? '' : Math.max(0, Number.isFinite(numeric) ? Math.round(numeric) : 0);
+                entry[field] = rawValue === '' ? '' : Math.max(0, Number.isFinite(numeric) ? numeric : 0);
         }
 
         setEntryScore(index, entry);
@@ -177,8 +197,15 @@ async function commitStationScore(index, { auto = false } = {}) {
                 }
         });
 
-        if (entry.dist && entry.dist.trim()) {
-                cumulative.dist = cumulative.dist ? `${cumulative.dist} + ${entry.dist.trim()}` : entry.dist.trim();
+        const formattedDistance = formatDistance(entry.dist);
+        if (formattedDistance) {
+                cumulative.dist = cumulative.dist ? `${cumulative.dist} + ${formattedDistance}` : formattedDistance;
+                hasUpdates = true;
+        }
+
+        if (entry.notes && entry.notes.trim()) {
+                const trimmedNotes = entry.notes.trim();
+                cumulative.notes = cumulative.notes ? `${cumulative.notes}\n${trimmedNotes}` : trimmedNotes;
                 hasUpdates = true;
         }
 
@@ -220,8 +247,13 @@ async function updateLiveScore(scoreObject) {
                         cleanedScore[field] = value;
                 }
         });
-        if (scoreObject.dist && String(scoreObject.dist).trim()) {
-                cleanedScore.dist = String(scoreObject.dist).trim();
+        const formattedDistance = formatDistance(scoreObject.dist);
+        if (formattedDistance) {
+                cleanedScore.dist = formattedDistance;
+        }
+
+        if (scoreObject.notes && String(scoreObject.notes).trim()) {
+                cleanedScore.notes = String(scoreObject.notes).trim();
         }
 
         try {
@@ -357,7 +389,11 @@ async function leaveStationRoster() {
 function hasTotals(index) {
         if (index < 0 || !cumulativeScores[index]) return false;
         const totals = cumulativeScores[index].score;
-        return ['reps', 'weight', 'cals'].some((key) => Number(totals[key]) > 0) || (totals.dist && totals.dist.trim());
+        return (
+                ['reps', 'weight', 'cals'].some((key) => Number(totals[key]) > 0) ||
+                (totals.dist && totals.dist.trim()) ||
+                (totals.notes && totals.notes.trim())
+        );
 }
 
 function hasLoggedScores() {
@@ -368,7 +404,8 @@ function hasLoggedScores() {
                         Number(score.reps) > 0 ||
                         Number(score.weight) > 0 ||
                         Number(score.cals) > 0 ||
-                        (score.dist && String(score.dist).trim().length > 0)
+                        (score.dist && String(score.dist).trim().length > 0) ||
+                        (score.notes && String(score.notes).trim().length > 0)
                 );
         });
 }
@@ -417,7 +454,11 @@ async function saveFinalScores() {
                         if (Number(item.score.reps) > 0) cleaned.reps = Number(item.score.reps);
                         if (Number(item.score.weight) > 0) cleaned.weight = Number(item.score.weight);
                         if (Number(item.score.cals) > 0) cleaned.cals = Number(item.score.cals);
-                        if (item.score.dist && item.score.dist.trim()) cleaned.dist = item.score.dist.trim();
+                        const formattedDistance = formatDistance(item.score.dist);
+                        if (formattedDistance) cleaned.dist = formattedDistance;
+                        if (item.score.notes && String(item.score.notes).trim()) {
+                                cleaned.notes = String(item.score.notes).trim();
+                        }
 
                         return Object.keys(cleaned).length
                                 ? { stationName: item.stationName, category: item.category, score: cleaned }
@@ -487,11 +528,21 @@ async function saveFinalScores() {
                         );
                 }
 
-                await Promise.all(writes);
+                const writeResults = await Promise.allSettled(writes);
+                const failedWrites = writeResults.filter((result) => result.status === 'rejected');
+
+                failedWrites.forEach((result) => {
+                        console.error('Follow-up write failed:', result.reason);
+                });
 
                 hasSavedFinalScore = true;
-                finalSaveStatus = 'success';
-                finalSaveMessage = 'Workout uploaded to your dashboard.';
+                if (failedWrites.length) {
+                        finalSaveStatus = 'warning';
+                        finalSaveMessage = 'Workout saved, but we could not update attendance automatically. Your coach will double-check it.';
+                } else {
+                        finalSaveStatus = 'success';
+                        finalSaveMessage = 'Workout uploaded to your dashboard.';
+                }
         } catch (error) {
                 console.error('Error saving score:', error);
                 finalSaveStatus = 'error';
@@ -610,40 +661,56 @@ function formatTime(s) {
                 <section class="pairing-controls" aria-live="polite">
                         <div class="pairing-copy">
                                 <h2>Partner pairing</h2>
-                                <p>
-                                        {#if hasJoinedRoster}
-                                                You are currently rotating with a partner. Leave the rotation if you would rather train solo.
+                                <p>Choose how you'd like to train for this partner workout.</p>
+                        </div>
+                        <div class="pairing-actions">
+                                <div class="pairing-toggle" role="radiogroup" aria-label="Partner preference">
+                                        <button
+                                                type="button"
+                                                class:active={!wantsPartnerPairing}
+                                                on:click={() => {
+                                                        wantsPartnerPairing = false;
+                                                        if (hasJoinedRoster && rosterStatus === 'idle') {
+                                                                void leaveStationRoster();
+                                                        }
+                                                }}
+                                                disabled={rosterStatus !== 'idle'}
+                                        >
+                                                I'm riding solo
+                                        </button>
+                                        <button
+                                                type="button"
+                                                class:active={wantsPartnerPairing}
+                                                on:click={() => {
+                                                        wantsPartnerPairing = true;
+                                                        if (!hasJoinedRoster && rosterStatus === 'idle') {
+                                                                void joinStationRoster();
+                                                        }
+                                                }}
+                                                disabled={rosterStatus !== 'idle'}
+                                        >
+                                                Pair me up
+                                        </button>
+                                </div>
+                                <p class="pairing-status" aria-live="polite">
+                                        {#if rosterStatus === 'joining'}
+                                                Adding you to the partner rotation...
+                                        {:else if rosterStatus === 'leaving'}
+                                                Updating your selection...
+                                        {:else if wantsPartnerPairing}
+                                                {#if hasJoinedRoster}
+                                                        You're set to rotate with a partner.
+                                                {:else if rosterError}
+                                                        We're unable to add you just yet. Please review the message below.
+                                                {:else}
+                                                        We'll add you as soon as there's an open station.
+                                                {/if}
                                         {:else}
-                                                Choose whether to be added to the partner rotation for this workout.
+                                                You're logged to train solo for this session.
                                         {/if}
                                 </p>
                                 {#if rosterError}
                                         <p class="pairing-error">{rosterError}</p>
-                                {/if}
-                        </div>
-                        <div class="pairing-actions">
-                                {#if hasJoinedRoster}
-                                        <button
-                                                class="btn btn-outline"
-                                                on:click={() => {
-                                                        wantsPartnerPairing = false;
-                                                        void leaveStationRoster();
-                                                }}
-                                                disabled={rosterStatus === 'joining' || rosterStatus === 'leaving'}
-                                        >
-                                                {rosterStatus === 'leaving' ? 'Leaving...' : 'Leave rotation'}
-                                        </button>
-                                {:else}
-                                        <button
-                                                class="btn btn-primary"
-                                                on:click={() => {
-                                                        wantsPartnerPairing = true;
-                                                        void joinStationRoster();
-                                                }}
-                                                disabled={!userProfile.displayName || rosterStatus === 'joining'}
-                                        >
-                                                {rosterStatus === 'joining' ? 'Joining...' : 'Join rotation'}
-                                        </button>
                                 {/if}
                         </div>
                 </section>
@@ -653,6 +720,7 @@ function formatTime(s) {
                 <main class="tracker-main">
                         <div class="score-card">
                                 <span class="score-label">Log Your Score</span>
+                                <p class="score-helper">Each field is optional—record whichever metrics you used.</p>
                                 {#if metricLabel || intervalDuration}
                                         <div class="score-meta">
                                                 {#if metricLabel}<span class="score-chip">{metricLabel}</span>{/if}
@@ -668,7 +736,7 @@ function formatTime(s) {
                                                                 type="number"
                                                                 inputmode="numeric"
                                                                 min="0"
-                                                                placeholder="0"
+                                                                placeholder="e.g. 12"
                                                                 value={currentEntries[myCurrentStationIndex].score.reps}
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
                                                         />
@@ -679,7 +747,7 @@ function formatTime(s) {
                                                                 type="number"
                                                                 inputmode="decimal"
                                                                 min="0"
-                                                                placeholder="0"
+                                                                placeholder="e.g. 40"
                                                                 value={currentEntries[myCurrentStationIndex].score.weight}
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'weight', event.target.value)}
                                                         />
@@ -693,17 +761,17 @@ function formatTime(s) {
                                                                 type="number"
                                                                 inputmode="numeric"
                                                                 min="0"
-                                                                placeholder="0"
+                                                                placeholder="e.g. 20"
                                                                 value={currentEntries[myCurrentStationIndex].score.cals}
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'cals', event.target.value)}
                                                         />
                                                 </label>
                                                 <label>
-                                                        <span>Distance</span>
+                                                        <span>Distance (m)</span>
                                                         <input
                                                                 type="text"
-                                                                inputmode="text"
-                                                                placeholder="e.g. 200m"
+                                                                inputmode="decimal"
+                                                                placeholder="e.g. 250m"
                                                                 value={currentEntries[myCurrentStationIndex].score.dist}
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'dist', event.target.value)}
                                                         />
@@ -717,7 +785,7 @@ function formatTime(s) {
                                                                 type="number"
                                                                 inputmode="numeric"
                                                                 min="0"
-                                                                placeholder="0"
+                                                                placeholder="e.g. 15"
                                                                 value={currentEntries[myCurrentStationIndex].score.reps}
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
                                                         />
@@ -949,8 +1017,43 @@ function formatTime(s) {
 
 .pairing-actions {
         display: flex;
+        flex-direction: column;
         gap: 0.75rem;
-        flex-shrink: 0;
+        flex: 1;
+}
+
+.pairing-toggle {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(140px, 1fr));
+        gap: 0.75rem;
+}
+
+.pairing-toggle button {
+        border-radius: 999px;
+        padding: 0.65rem 1rem;
+        font-weight: 700;
+        cursor: pointer;
+        border: 1px solid var(--border-color);
+        background: transparent;
+        color: var(--text-secondary);
+        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.pairing-toggle button.active {
+        background: var(--brand-yellow);
+        border-color: var(--brand-yellow);
+        color: var(--deep-space);
+}
+
+.pairing-toggle button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+}
+
+.pairing-status {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.85rem;
 }
 
 .btn {
@@ -1030,6 +1133,12 @@ function formatTime(s) {
         font-size: 0.9rem;
         color: var(--text-muted);
         text-transform: uppercase;
+}
+
+.score-helper {
+        margin: 0.35rem 0 0;
+        font-size: 0.8rem;
+        color: var(--text-muted);
 }
 
 .score-meta {
@@ -1254,6 +1363,10 @@ function formatTime(s) {
         color: #f87171;
 }
 
+.post-workout-card .status.warning {
+        color: var(--brand-yellow);
+}
+
 .feedback-overlay {
         position: fixed;
         inset: 0;
@@ -1367,7 +1480,14 @@ function formatTime(s) {
 
         .pairing-actions {
                 width: 100%;
-                justify-content: flex-start;
+        }
+
+        .pairing-toggle {
+                grid-template-columns: 1fr;
+        }
+
+        .pairing-toggle button {
+                width: 100%;
         }
 
         .btn {

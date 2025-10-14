@@ -2,7 +2,6 @@
   // @ts-nocheck
   import { db } from '$lib/firebase';
   import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-  import { goto } from '$app/navigation';
 
   export let data;
   const { workout, profiles } = data;
@@ -11,11 +10,28 @@
   
   // --- NEW: More structured state for scores ---
   let timeScore = ''; // For 'For Time' workouts
-  let exerciseScores = workout.exercises.map((ex) => ({
-    stationName: ex.name,
-    category: ex.category,
-    score: { reps: null, weight: null, cals: null, dist: null }
-  }));
+  const formatDistance = (value) => {
+    if (!value) return '';
+    const trimmed = String(value).trim();
+    if (!trimmed) return '';
+    const lower = trimmed.toLowerCase();
+    if (lower.endsWith('m') || lower.endsWith('km')) {
+      return trimmed;
+    }
+    if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+      return `${trimmed}m`;
+    }
+    return trimmed;
+  };
+
+  const buildScoreState = () =>
+    workout.exercises.map((ex) => ({
+      stationName: ex.name,
+      category: ex.category,
+      score: { reps: null, weight: null, cals: null, dist: null, notes: '' }
+    }));
+
+  let exerciseScores = buildScoreState();
 
   let isSubmitting = false;
   let successMessage = '';
@@ -36,17 +52,30 @@
       // --- NEW: Create a different data object based on workout type ---
       let scorePayload;
       if (workout.type === 'For Time') {
-        scorePayload = { timeScore: timeScore };
+        const trimmedTime = typeof timeScore === 'string' ? timeScore.trim() : timeScore;
+        scorePayload = { timeScore: trimmedTime };
       } else {
         // Clean up the exercise scores to only include entered values
         const cleanedExerciseScores = exerciseScores
           .map((item) => {
             const cleanedScore = {};
-            for (const key in item.score) {
-              if (item.score[key] !== null && item.score[key] !== '') {
-                cleanedScore[key] = item.score[key];
-              }
-            }
+            const source = item.score || {};
+
+            const reps = Number(source.reps);
+            if (Number.isFinite(reps) && reps > 0) cleanedScore.reps = reps;
+
+            const weight = Number(source.weight);
+            if (Number.isFinite(weight) && weight > 0) cleanedScore.weight = weight;
+
+            const cals = Number(source.cals);
+            if (Number.isFinite(cals) && cals > 0) cleanedScore.cals = cals;
+
+            const formattedDist = formatDistance(source.dist);
+            if (formattedDist) cleanedScore.dist = formattedDist;
+
+            const notes = typeof source.notes === 'string' ? source.notes.trim() : '';
+            if (notes) cleanedScore.notes = notes;
+
             return { ...item, score: cleanedScore };
           })
           .filter((item) => Object.keys(item.score).length > 0);
@@ -70,11 +99,7 @@
       // Reset form
       selectedUserId = '';
       timeScore = '';
-      exerciseScores = workout.exercises.map((ex) => ({
-        stationName: ex.name,
-        category: ex.category,
-        score: { reps: null, weight: null, cals: null, dist: null }
-      }));
+      exerciseScores = buildScoreState();
 
     } catch (error) {
       console.error('Error saving score:', error);
@@ -115,20 +140,23 @@
         {:else}
           <fieldset>
             <legend>Enter Scores per Station</legend>
+            <p class="fieldset-hint">Only fill in the metrics completed for each station. Leave any unused fields blank.</p>
             {#each exerciseScores as item, i}
               <div class="score-entry">
                 <label for={`score-${i}`}>{i + 1}. {item.stationName}</label>
                 <div class="input-group">
                   {#if item.category === 'Resistance'}
-                    <input type="number" bind:value={item.score.reps} placeholder="Reps" />
-                    <input type="number" bind:value={item.score.weight} placeholder="Weight (kg)" />
+                    <input type="number" min="0" inputmode="numeric" bind:value={item.score.reps} placeholder="e.g. 12" />
+                    <input type="number" min="0" step="0.5" inputmode="decimal" bind:value={item.score.weight} placeholder="e.g. 40" />
+                    <span class="metric-hint">Record reps, load (kg), or both.</span>
                   {:else if item.category === 'Cardio Machine'}
-                    <input type="number" bind:value={item.score.cals} placeholder="Calories" />
-                    <input type="text" bind:value={item.score.dist} placeholder="Distance" />
+                    <input type="number" min="0" inputmode="numeric" bind:value={item.score.cals} placeholder="e.g. 20" />
+                    <input type="text" inputmode="decimal" bind:value={item.score.dist} placeholder="e.g. 250m" />
+                    <span class="metric-hint">Log calories burned, distance (m), or both.</span>
                   {:else if item.category === 'Bodyweight'}
-                    <input type="number" bind:value={item.score.reps} placeholder="Reps" />
+                    <input type="number" min="0" inputmode="numeric" bind:value={item.score.reps} placeholder="e.g. 15" />
                   {:else}
-                    <input type="text" bind:value={item.score.notes} placeholder="Enter score..." />
+                    <input type="text" bind:value={item.score.notes} placeholder="Notes (optional)" />
                   {/if}
                 </div>
               </div>
@@ -159,6 +187,7 @@
   select, input { width: 100%; font-size: 1rem; padding: 0.75rem 1rem; border-radius: 12px; border: 1px solid var(--border-color); background: var(--deep-space); color: var(--text-primary); }
   fieldset { border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem; }
   legend { padding: 0 0.5rem; font-weight: 600; color: var(--text-secondary); }
+  .fieldset-hint { margin: 0.75rem 0 1.25rem; color: var(--text-muted); font-size: 0.9rem; }
   .score-entry { display: grid; grid-template-columns: 1fr; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
   .score-entry:last-child { margin-bottom: 0; }
   .score-entry label { margin-bottom: 0; grid-column: 1 / -1; } /* Label on its own row */
@@ -173,6 +202,12 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem;
+  }
+  .metric-hint {
+    grid-column: 1 / -1;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: -0.25rem;
   }
   /* Make single inputs span both columns */
   .input-group input:only-child {
