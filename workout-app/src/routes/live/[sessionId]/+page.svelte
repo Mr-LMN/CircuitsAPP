@@ -30,6 +30,16 @@ let previousStationIndex = -1;
 let hasSavedFinalScore = false;
 let hasJoinedRoster = false;
 let wantsPartnerPairing = workout.mode !== 'Partner';
+let pairingLocked = workout.mode !== 'Partner';
+let isTrainingSolo = false;
+
+let myPartnerSlot = -1;
+let myPartnerRole = '';
+let myActiveTaskLabel = '';
+let currentP1Task = '';
+let currentP2Task = '';
+let soloPrimaryTask = '';
+let soloSecondaryTask = '';
 
 let rosterStatus = 'idle';
 let rosterError = '';
@@ -106,8 +116,15 @@ onMount(() => {
                 if (didJoin !== hasJoinedRoster) {
                         hasJoinedRoster = didJoin;
                 }
-                if (didJoin && workout.mode === 'Partner') {
-                        wantsPartnerPairing = true;
+                if (workout.mode === 'Partner') {
+                        if (didJoin) {
+                                if (!isTrainingSolo && !pairingLocked) {
+                                        wantsPartnerPairing = true;
+                                }
+                        } else if (!pairingLocked) {
+                                wantsPartnerPairing = false;
+                                isTrainingSolo = false;
+                        }
                 }
         });
 
@@ -273,7 +290,7 @@ async function updateLiveScore(scoreObject) {
         }
 }
 
-async function joinStationRoster() {
+async function joinStationRoster({ trainingSolo = false } = {}) {
         if (rosterStatus === 'joining' || hasJoinedRoster || !$user?.uid || !myScoreRef) return;
 
         const displayName = (userProfile.displayName || '').trim();
@@ -333,7 +350,12 @@ async function joinStationRoster() {
                 );
 
                 hasJoinedRoster = true;
-                wantsPartnerPairing = true;
+                if (workout.mode === 'Partner') {
+                        isTrainingSolo = trainingSolo;
+                        wantsPartnerPairing = !trainingSolo;
+                } else {
+                        wantsPartnerPairing = true;
+                }
         } catch (error) {
                 console.error('Failed to join station roster', error);
                 rosterError = 'Could not join the rotation. Please try again.';
@@ -374,7 +396,15 @@ async function leaveStationRoster() {
                 await deleteDoc(myScoreRef);
 
                 hasJoinedRoster = false;
-                wantsPartnerPairing = false;
+                if (workout.mode === 'Partner') {
+                        if (!pairingLocked) {
+                                wantsPartnerPairing = false;
+                        }
+                        isTrainingSolo = false;
+                        myPartnerSlot = -1;
+                } else {
+                        wantsPartnerPairing = false;
+                }
                 myCurrentStationIndex = -1;
                 myNextStationIndex = -1;
                 previousStationIndex = -1;
@@ -383,6 +413,32 @@ async function leaveStationRoster() {
                 rosterError = 'Could not update the roster. Please try again.';
         } finally {
                 rosterStatus = 'idle';
+        }
+}
+
+function selectSoloMode() {
+        if (workout.mode !== 'Partner' || pairingLocked || rosterStatus !== 'idle') return;
+
+        isTrainingSolo = true;
+        wantsPartnerPairing = false;
+        pairingLocked = true;
+        rosterError = '';
+
+        if (!hasJoinedRoster) {
+                void joinStationRoster({ trainingSolo: true });
+        }
+}
+
+function selectPartnerMode() {
+        if (workout.mode !== 'Partner' || pairingLocked || rosterStatus !== 'idle') return;
+
+        isTrainingSolo = false;
+        wantsPartnerPairing = true;
+        pairingLocked = true;
+        rosterError = '';
+
+        if (!hasJoinedRoster) {
+                void joinStationRoster({ trainingSolo: false });
         }
 }
 
@@ -568,10 +624,16 @@ $: if (
         !hasJoinedRoster &&
         rosterStatus === 'idle'
 ) {
-        void joinStationRoster();
+        void joinStationRoster({ trainingSolo: false });
 }
 
-$: if (workout.mode === 'Partner' && !wantsPartnerPairing && hasJoinedRoster && rosterStatus === 'idle') {
+$: if (
+        workout.mode === 'Partner' &&
+        !wantsPartnerPairing &&
+        hasJoinedRoster &&
+        rosterStatus === 'idle' &&
+        !isTrainingSolo
+) {
         void leaveStationRoster();
 }
 
@@ -583,22 +645,27 @@ $: if (userProfile.displayName && hasJoinedRoster) {
         if (assignments.length && liveState.movesCompleted !== undefined) {
                 const uppercaseName = userProfile.displayName?.toUpperCase();
                 let startingIndex = -1;
+                let startingRoster = [];
                 assignments.forEach((roster, index) => {
                         if (roster.includes(uppercaseName)) {
                                 startingIndex = index;
+                                startingRoster = roster;
                         }
                 });
 
                 if (startingIndex !== -1) {
                         const total = workout.exercises.length;
+                        myPartnerSlot = startingRoster.indexOf(uppercaseName);
                         myCurrentStationIndex = (startingIndex + liveState.movesCompleted) % total;
                         myNextStationIndex = (myCurrentStationIndex + 1) % total;
                 } else {
+                        myPartnerSlot = -1;
                         myCurrentStationIndex = -1;
                         myNextStationIndex = -1;
                 }
         }
 } else {
+        myPartnerSlot = -1;
         myCurrentStationIndex = -1;
         myNextStationIndex = -1;
 }
@@ -635,6 +702,50 @@ $: metricLabel = myStationData
         : '';
 $: hasPendingForCurrent = myCurrentStationIndex >= 0 && pendingStations.has(myCurrentStationIndex);
 
+$: currentP1Task = myStationData?.p1?.task ? String(myStationData.p1.task).trim() : '';
+$: currentP2Task = myStationData?.p2?.task ? String(myStationData.p2.task).trim() : '';
+$: if (workout.mode === 'Partner') {
+        if (myPartnerSlot === 0) {
+                myPartnerRole = 'Partner A';
+        } else if (myPartnerSlot === 1) {
+                myPartnerRole = 'Partner B';
+        } else if (myPartnerSlot >= 0) {
+                myPartnerRole = `Partner ${myPartnerSlot + 1}`;
+        } else {
+                myPartnerRole = '';
+        }
+} else {
+        myPartnerRole = '';
+}
+$: {
+        if (workout.mode === 'Partner' && myStationData) {
+                const fallbackName = myStationData.name || '';
+                const soloPrimary = currentP1Task || currentP2Task || fallbackName;
+                soloPrimaryTask = soloPrimary;
+                soloSecondaryTask = currentP2Task && currentP2Task !== soloPrimary ? currentP2Task : '';
+
+                const primaryTask = currentP1Task || fallbackName || soloPrimary;
+                const secondaryTask = currentP2Task || primaryTask;
+                const isSecondWorkBlock = liveState?.phaseIndex === 2;
+
+                if (isTrainingSolo) {
+                        myActiveTaskLabel = isSecondWorkBlock ? secondaryTask : primaryTask;
+                } else if (myPartnerSlot === 0) {
+                        myActiveTaskLabel = isSecondWorkBlock ? secondaryTask : primaryTask;
+                } else if (myPartnerSlot === 1) {
+                        myActiveTaskLabel = isSecondWorkBlock ? primaryTask : secondaryTask;
+                } else if (myPartnerSlot >= 0) {
+                        myActiveTaskLabel = primaryTask;
+                } else {
+                        myActiveTaskLabel = primaryTask;
+                }
+        } else {
+                soloPrimaryTask = myStationData?.name ?? '';
+                soloSecondaryTask = '';
+                myActiveTaskLabel = myStationData?.name ?? '';
+        }
+}
+
 function formatTime(s) {
         const secs = Math.max(0, Math.ceil(s));
         return String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
@@ -667,27 +778,21 @@ function formatTime(s) {
                                 <div class="pairing-toggle" role="radiogroup" aria-label="Partner preference">
                                         <button
                                                 type="button"
-                                                class:active={!wantsPartnerPairing}
-                                                on:click={() => {
-                                                        wantsPartnerPairing = false;
-                                                        if (hasJoinedRoster && rosterStatus === 'idle') {
-                                                                void leaveStationRoster();
-                                                        }
-                                                }}
-                                                disabled={rosterStatus !== 'idle'}
+                                                class:active={isTrainingSolo}
+                                                class:locked={pairingLocked}
+                                                on:click={selectSoloMode}
+                                                aria-pressed={isTrainingSolo}
+                                                disabled={rosterStatus !== 'idle' || pairingLocked}
                                         >
                                                 I'm riding solo
                                         </button>
                                         <button
                                                 type="button"
-                                                class:active={wantsPartnerPairing}
-                                                on:click={() => {
-                                                        wantsPartnerPairing = true;
-                                                        if (!hasJoinedRoster && rosterStatus === 'idle') {
-                                                                void joinStationRoster();
-                                                        }
-                                                }}
-                                                disabled={rosterStatus !== 'idle'}
+                                                class:active={!isTrainingSolo}
+                                                class:locked={pairingLocked}
+                                                on:click={selectPartnerMode}
+                                                aria-pressed={!isTrainingSolo}
+                                                disabled={rosterStatus !== 'idle' || pairingLocked}
                                         >
                                                 Pair me up
                                         </button>
@@ -697,6 +802,14 @@ function formatTime(s) {
                                                 Adding you to the partner rotation...
                                         {:else if rosterStatus === 'leaving'}
                                                 Updating your selection...
+                                        {:else if isTrainingSolo}
+                                                {#if hasJoinedRoster}
+                                                        You're locked in to train solo for this partner session.
+                                                {:else if rosterError}
+                                                        We're unable to add you just yet. Please review the message below.
+                                                {:else}
+                                                        We'll load your solo station as soon as it's assigned.
+                                                {/if}
                                         {:else if wantsPartnerPairing}
                                                 {#if hasJoinedRoster}
                                                         You're set to rotate with a partner.
@@ -709,6 +822,9 @@ function formatTime(s) {
                                                 You're logged to train solo for this session.
                                         {/if}
                                 </p>
+                                {#if pairingLocked}
+                                        <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
+                                {/if}
                                 {#if rosterError}
                                         <p class="pairing-error">{rosterError}</p>
                                 {/if}
@@ -830,6 +946,24 @@ function formatTime(s) {
                 <footer class="station-info">
                         <div class="station-display current">
                                 <h2>NOW: Station {myCurrentStationIndex + 1} - {myStationData.name}</h2>
+                                {#if workout.mode === 'Partner'}
+                                        {#if isTrainingSolo}
+                                                {#if soloPrimaryTask}
+                                                        <p class="start-callout">
+                                                                Training solo—start on <strong>{soloPrimaryTask}</strong>
+                                                                {#if soloSecondaryTask}
+                                                                        , then move to <strong>{soloSecondaryTask}</strong>
+                                                                {/if}
+                                                                .
+                                                        </p>
+                                                {/if}
+                                        {:else if myPartnerSlot !== -1 && myActiveTaskLabel}
+                                                <p class="start-callout">
+                                                        {#if myPartnerRole}<span class="start-role">{myPartnerRole}</span>{/if}
+                                                        Start on <strong>{myActiveTaskLabel}</strong>.
+                                                </p>
+                                        {/if}
+                                {/if}
                                 <div class="task-line"><span class="task-label p1">P1</span><span class="task-text">{myStationData.p1?.task}</span></div>
                                 {#if myStationData.p2?.task}
                                         <div class="task-line"><span class="task-label p2">P2</span><span class="task-text">{myStationData.p2.task}</span></div>
@@ -853,7 +987,7 @@ function formatTime(s) {
                                                         Join the rotation when you're ready and we'll assign you to a station as soon as the next interval starts.
                                                 {/if}
                                         </p>
-                                        {#if !hasJoinedRoster}
+                                        {#if !hasJoinedRoster && !pairingLocked}
                                                 <button
                                                         class="btn btn-primary"
                                                         on:click={() => {
@@ -1045,6 +1179,10 @@ function formatTime(s) {
         color: var(--deep-space);
 }
 
+.pairing-toggle button.locked {
+        border-style: dashed;
+}
+
 .pairing-toggle button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
@@ -1054,6 +1192,12 @@ function formatTime(s) {
         margin: 0;
         color: var(--text-muted);
         font-size: 0.85rem;
+}
+
+.pairing-note {
+        margin: -0.35rem 0 0;
+        color: var(--text-muted);
+        font-size: 0.8rem;
 }
 
 .btn {
@@ -1269,6 +1413,29 @@ function formatTime(s) {
         border-radius: 16px;
         padding: 1rem;
         text-align: left;
+}
+.start-callout {
+        margin: 0 0 0.75rem;
+        padding: 0.75rem;
+        border-radius: 12px;
+        background: rgba(56, 189, 248, 0.08);
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+}
+.start-callout strong {
+        color: var(--brand-yellow);
+}
+.start-role {
+        display: inline-block;
+        margin-right: 0.5rem;
+        padding: 0.15rem 0.55rem;
+        border-radius: 999px;
+        background: rgba(253, 224, 71, 0.18);
+        color: var(--brand-yellow);
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
 }
 
 .station-display.current {
