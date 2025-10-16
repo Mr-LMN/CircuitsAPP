@@ -2,8 +2,11 @@
   // @ts-nocheck
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { db, auth } from '$lib/firebase';
+  import { resolve } from '$app/paths';
+  import { get } from 'svelte/store';
+  import { db } from '$lib/firebase';
   import { collection, addDoc, serverTimestamp, getDocs, doc, setDoc } from 'firebase/firestore';
+  import { user } from '$lib/store';
 
   const FALLBACK_CATEGORIES = ['Bodyweight', 'Cardio Machine', 'Resistance'];
 
@@ -49,6 +52,8 @@
   let isSubmitting = false;
   let successMessage = '';
   let errorMessage = '';
+
+  const workoutsUrl = resolve('/admin/workouts');
 
   onMount(async () => {
     const querySnapshot = await getDocs(collection(db, 'exercises'));
@@ -249,8 +254,8 @@
       return;
     }
 
-    const user = auth.currentUser;
-    if (!user) {
+    const currentUser = get(user);
+    if (!currentUser?.uid) {
       errorMessage = 'You need to be signed in to create workouts.';
       successMessage = '';
       return;
@@ -291,7 +296,7 @@
         isBenchmark,
         notes: notes?.trim?.() ?? '',
         exercises: normalizedExercises,
-        creatorId: user.uid,
+        creatorId: currentUser.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
@@ -314,7 +319,7 @@
       }
 
       successMessage = 'Workout created successfully! Redirecting...';
-      setTimeout(() => goto('/admin/workouts'), 1200);
+      setTimeout(() => goto(workoutsUrl), 1200);
     } catch (error) {
       console.error('Error saving workout: ', error);
       errorMessage = 'Failed to save workout. Please try again.';

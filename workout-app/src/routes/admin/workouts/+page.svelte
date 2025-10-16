@@ -1,47 +1,82 @@
 <script>
 	// @ts-nocheck
-	import { onMount } from 'svelte';
-	import { db, auth } from '$lib/firebase';
-	import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
-	import { goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
+        import { onMount } from 'svelte';
+        import { get } from 'svelte/store';
+        import { db } from '$lib/firebase';
+        import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
+        import { goto } from '$app/navigation';
+        import { resolve } from '$app/paths';
+        import { loading, user } from '$lib/store';
 
-	let workouts = [];
-	let isLoading = true;
+        let workouts = [];
+        let isLoading = true;
+        let loadError = '';
 
-	// This function runs when the component loads
-	onMount(async () => {
-		const user = auth.currentUser;
-		if (!user) return;
+        let lastLoadedUid = null;
 
-		// Create a query to get only the workouts created by the current user
-		const q = query(collection(db, 'workouts'), where('creatorId', '==', user.uid));
+        async function fetchWorkouts(uid) {
+                isLoading = true;
+                loadError = '';
 
-		const querySnapshot = await getDocs(q);
+                try {
+                        const workoutsQuery = query(collection(db, 'workouts'), where('creatorId', '==', uid));
+                        const snapshot = await getDocs(workoutsQuery);
+                        workouts = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+                } catch (error) {
+                        console.error('Failed to load workouts', error);
+                        loadError = 'We were unable to load your workouts. Please try again.';
+                        workouts = [];
+                } finally {
+                        isLoading = false;
+                }
+        }
 
-		// Loop through the results and add them to our local array
-		workouts = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        onMount(() => {
+                const unsubscribeUser = user.subscribe(($user) => {
+                        const uid = $user?.uid ?? null;
 
-		isLoading = false;
-	});
+                        if (!uid) {
+                                workouts = [];
+                                loadError = '';
+                                isLoading = get(loading);
+                                lastLoadedUid = null;
+                                return;
+                        }
+
+                        if (uid === lastLoadedUid) return;
+                        lastLoadedUid = uid;
+                        void fetchWorkouts(uid);
+                });
+
+                const unsubscribeLoading = loading.subscribe(($loading) => {
+                        if (!get(user)?.uid) {
+                                isLoading = $loading;
+                                if (!$loading) {
+                                        loadError = '';
+                                }
+                        }
+                });
+
+                return () => {
+                        unsubscribeUser();
+                        unsubscribeLoading();
+                };
+        });
 
 	const createWorkoutUrl = resolve('/admin/create');
 
-	async function deleteWorkout(id, index) {
-		if (!confirm('Are you sure you want to delete this workout?')) {
-			return;
-		}
-		try {
-			// Delete the document from Firestore
-			await deleteDoc(doc(db, 'workouts', id));
-			// Remove the workout from our local array to update the UI instantly
-			workouts.splice(index, 1);
-			workouts = workouts; // Trigger Svelte's reactivity
-		} catch (error) {
-			console.error('Error deleting workout: ', error);
-			alert('Failed to delete workout.');
-		}
-	}
+        async function deleteWorkout(id) {
+                if (!confirm('Are you sure you want to delete this workout?')) {
+                        return;
+                }
+                try {
+                        await deleteDoc(doc(db, 'workouts', id));
+                        workouts = workouts.filter((workout) => workout.id !== id);
+                } catch (error) {
+                        console.error('Error deleting workout: ', error);
+                        alert('Failed to delete workout.');
+                }
+        }
 
 	function editWorkout(id) {
 		// We'll build this page in a future step
@@ -60,11 +95,13 @@
 		<a href={createWorkoutUrl} class="primary-btn">Create New Workout</a>
 	</div>
 
-	{#if isLoading}
-		<p>Loading your workouts...</p>
-	{:else if workouts.length === 0}
-		<div class="empty-state">
-			<p>You haven't created any workouts yet.</p>
+        {#if isLoading}
+                <p>Loading your workouts...</p>
+        {:else if loadError}
+                <p class="error-message">{loadError}</p>
+        {:else if workouts.length === 0}
+                <div class="empty-state">
+                        <p>You haven't created any workouts yet.</p>
 			<p>Click the "Create New Workout" button to get started!</p>
 		</div>
 	{:else}
@@ -113,9 +150,9 @@
                                         </div>
 					<div class="card-actions">
 						<button class="action-btn edit" on:click={() => editWorkout(workout.id)}>Edit</button>
-						<button class="action-btn delete" on:click={() => deleteWorkout(workout.id, i)}
-							>Delete</button
-						>
+                                                <button class="action-btn delete" on:click={() => deleteWorkout(workout.id)}
+                                                        >Delete</button
+                                                >
 						<button class="action-btn start" on:click={() => startWorkout(workout.id)}
 							>Start Session</button
 						>
@@ -131,6 +168,7 @@
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem; }
 h1 { color: var(--brand-yellow); font-family: var(--font-display); font-size: 3rem; letter-spacing: 2px; }
 .empty-state { text-align: center; padding: 3rem; background-color: var(--surface-1); border: 1px dashed var(--border-color); border-radius: 16px; color: var(--text-muted); }
+.error-message { margin: 1rem 0; color: var(--error); text-align: center; font-weight: 600; }
 .workouts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1.5rem; }
 .workout-card {
 background-color: var(--surface-1);
@@ -163,7 +201,6 @@ border-top: 1px solid var(--border-color);
 .exercise-list strong { font-size: 0.9rem; color: var(--text-secondary); }
 .exercise-list ul { list-style: none; padding: 0; margin-top: 0.5rem; font-size: 0.85rem; }
 .exercise-list li { margin-bottom: 0.3rem; } /* Tighter spacing */
-.exercise-list li strong { color: var(--text-primary); }
 .exercise-list li span { color: var(--text-muted); margin-left: 0.5rem; }
 
 .card-actions { margin-top: 1.5rem; display: flex; gap: 0.5rem; justify-content: flex-end; }
@@ -172,8 +209,5 @@ border-top: 1px solid var(--border-color);
 .action-btn.delete { background-color: #ef4444; color: white; }
 .action-btn.start { background-color: var(--brand-green); color: var(--brand-yellow); flex-grow: 1; }
 
-.filter-controls { display: flex; gap: 0.5rem; margin-bottom: 2rem; align-items: center; flex-wrap: wrap; }
-.filter-controls button { background-color: var(--surface-1); border: 1px solid var(--border-color); color: var(--text-muted); padding: 0.5rem 1rem; border-radius: 999px; cursor: pointer; }
-.filter-controls button.active { background-color: var(--brand-yellow); color: var(--bg-main); border-color: var(--brand-yellow); font-weight: bold; }
 .link-btn { background: none; border: none; color: var(--brand-yellow); cursor: pointer; }
 </style>
