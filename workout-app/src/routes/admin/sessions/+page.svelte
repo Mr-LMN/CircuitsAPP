@@ -1,19 +1,21 @@
 <script>
 // @ts-nocheck
-import { onMount, onDestroy } from 'svelte';
-import { db, auth } from '$lib/firebase';
+import { onMount } from 'svelte';
+import { get } from 'svelte/store';
+import { db } from '$lib/firebase';
 import {
-collection,
-getDocs,
-addDoc,
-serverTimestamp,
-query,
-orderBy,
-where,
-doc,
-deleteDoc,
-onSnapshot
+  collection,
+  getDocs,
+  addDoc,
+  serverTimestamp,
+  query,
+  orderBy,
+  where,
+  doc,
+  deleteDoc,
+  onSnapshot
 } from 'firebase/firestore';
+import { loading, user } from '$lib/store';
 
 let allWorkouts = [];
 let upcomingSessions = [];
@@ -23,6 +25,7 @@ let isLoading = true;
 let isSubmitting = false;
 let searchTerm = '';
 let unsubscribeSessions = () => {};
+let currentUid = null;
 
 function formatDate(date) {
 if (!date) return null;
@@ -33,72 +36,133 @@ const d = new Date(date);
 return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
-onMount(async () => {
-const user = auth.currentUser;
-if (!user) return;
+async function watchSessions(uid) {
+  unsubscribeSessions();
 
-const workoutsQuery = query(collection(db, 'workouts'), where('creatorId', '==', user.uid));
-const workoutsSnapshot = await getDocs(workoutsQuery);
-allWorkouts = workoutsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const workoutsQuery = query(collection(db, 'workouts'), where('creatorId', '==', uid));
+  const workoutsSnapshot = await getDocs(workoutsQuery);
+  allWorkouts = workoutsSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
 
-const sessionsQuery = query(
-collection(db, 'sessions'),
-where('creatorId', '==', user.uid),
-orderBy('sessionDate', 'desc')
-);
-        unsubscribeSessions = onSnapshot(sessionsQuery, (snapshot) => {
-                const allSessions = snapshot.docs.map((doc) => {
-                        const data = doc.data();
-                        return {
-                                id: doc.id,
-                                ...data,
-                                rsvps: data.rsvps ?? [],
-                                attendance: data.attendance ?? []
-                        };
-                });
+  const sessionsQuery = query(
+    collection(db, 'sessions'),
+    where('creatorId', '==', uid),
+    orderBy('sessionDate', 'desc')
+  );
 
-// --- THIS IS THE FIX ---
-// We define the 'start of today' to compare against, ignoring the current time.
-const startOfToday = new Date();
-startOfToday.setHours(0, 0, 0, 0);
+  unsubscribeSessions = onSnapshot(
+    sessionsQuery,
+    (snapshot) => {
+      const allSessions = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          ...data,
+          rsvps: data.rsvps ?? [],
+          attendance: data.attendance ?? []
+        };
+      });
 
-upcomingSessions = allSessions.filter((s) => formatDate(s.sessionDate) >= startOfToday).reverse(); // Shows nearest upcoming session first
-pastSessions = allSessions.filter((s) => formatDate(s.sessionDate) < startOfToday);
-// --- END OF FIX ---
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
 
-isLoading = false;
-});
-});
+      upcomingSessions = allSessions
+        .filter((session) => {
+          const date = formatDate(session.sessionDate);
+          return date && date >= startOfToday;
+        })
+        .reverse();
 
-onDestroy(() => {
-unsubscribeSessions();
+      pastSessions = allSessions.filter((session) => {
+        const date = formatDate(session.sessionDate);
+        return date && date < startOfToday;
+      });
+
+      isLoading = false;
+    },
+    (error) => {
+      console.error('Failed to subscribe to sessions', error);
+      isLoading = false;
+    }
+  );
+}
+
+onMount(() => {
+  const unsubscribeUser = user.subscribe(async ($user) => {
+    const uid = $user?.uid ?? null;
+
+    if (!uid) {
+      unsubscribeSessions();
+      currentUid = null;
+      allWorkouts = [];
+      upcomingSessions = [];
+      pastSessions = [];
+      isLoading = get(loading);
+      return;
+    }
+
+    if (uid === currentUid) return;
+    currentUid = uid;
+    isLoading = true;
+    try {
+      await watchSessions(uid);
+    } catch (error) {
+      console.error('Failed to initialise sessions dashboard', error);
+      isLoading = false;
+    }
+  });
+
+  const unsubscribeLoading = loading.subscribe(($loading) => {
+    if (!get(user)?.uid) {
+      isLoading = $loading;
+    }
+  });
+
+  unsubscribeSessions = () => {};
+
+  return () => {
+    unsubscribeSessions();
+    unsubscribeUser();
+    unsubscribeLoading();
+  };
 });
 
 async function createSession() {
-if (!newSession.date || !newSession.workoutId || isSubmitting) {
-alert('Please select a date and a workout.');
-return;
-}
-isSubmitting = true;
-try {
-const selectedWorkout = allWorkouts.find((w) => w.id === newSession.workoutId);
-const sessionData = {
-        creatorId: auth.currentUser.uid,
-        sessionDate: formatDate(newSession.date),
-        workoutId: selectedWorkout.id,
-        workoutTitle: selectedWorkout.title,
-        rsvps: [],
-        attendance: [],
-        createdAt: serverTimestamp()
-};
-await addDoc(collection(db, 'sessions'), sessionData);
-newSession = { date: '', workoutId: '' };
-} catch (error) {
-console.error('Error creating session:', error);
-alert('Failed to create session.');
-} finally {
-isSubmitting = false;
-}
+  if (!newSession.date || !newSession.workoutId || isSubmitting) {
+    alert('Please select a date and a workout.');
+    return;
+  }
+
+  const currentUser = get(user);
+  if (!currentUser?.uid) {
+    alert('You need to be signed in to create sessions.');
+    return;
+  }
+
+  const selectedWorkout = allWorkouts.find((w) => w.id === newSession.workoutId);
+  if (!selectedWorkout) {
+    alert('Please choose a valid workout.');
+    return;
+  }
+
+  isSubmitting = true;
+  try {
+    const sessionData = {
+      creatorId: currentUser.uid,
+      sessionDate: formatDate(newSession.date),
+      workoutId: selectedWorkout.id,
+      workoutTitle: selectedWorkout.title,
+      rsvps: [],
+      attendance: [],
+      createdAt: serverTimestamp()
+    };
+    await addDoc(collection(db, 'sessions'), sessionData);
+    newSession = { date: '', workoutId: '' };
+  } catch (error) {
+    console.error('Error creating session:', error);
+    alert('Failed to create session.');
+  } finally {
+    isSubmitting = false;
+  }
 }
 
 async function deleteSession(sessionId) {

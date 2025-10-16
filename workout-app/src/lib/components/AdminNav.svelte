@@ -1,9 +1,46 @@
 <script>
-	let isOpen = false;
+        import { onDestroy } from 'svelte';
+        import { page } from '$app/stores';
+
+        let isOpen = false;
+        let lastPathname = '';
+
+        const stopWatchingPage = page.subscribe(($page) => {
+                if (lastPathname && lastPathname !== $page.url.pathname) {
+                        isOpen = false;
+                }
+                lastPathname = $page.url.pathname;
+        });
+
+        onDestroy(() => {
+                stopWatchingPage();
+        });
+
+        function toggleMenu() {
+                isOpen = !isOpen;
+        }
+
+        function closeMenu() {
+                isOpen = false;
+        }
+
+        /** @param {KeyboardEvent} event */
+        function handleKeydown(event) {
+                if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeMenu();
+                }
+        }
 </script>
 
 <div class="admin-nav">
-        <button class="hamburger" on:click={() => (isOpen = !isOpen)} aria-label="Toggle admin navigation">
+        <button
+                class="hamburger"
+                on:click={toggleMenu}
+                on:keydown={handleKeydown}
+                aria-label="Toggle admin navigation"
+                aria-expanded={isOpen}
+        >
                 <svg
                         xmlns="http://www.w3.org/2000/svg"
                         fill="none"
@@ -16,18 +53,18 @@
 	</button>
 
         {#if isOpen}
-                <button type="button" class="menu-overlay" aria-label="Close admin navigation" on:click={() => (isOpen = false)}></button>
-                <div class="menu">
-			<h3>Admin Menu</h3>
-			<ul>
-				<li><a href="/dashboard" on:click={() => (isOpen = false)}>Dashboard</a></li>
-				<li><a href="/admin/workouts" on:click={() => (isOpen = false)}>My Workouts</a></li>
-				<li><a href="/admin/create" on:click={() => (isOpen = false)}>Create Workout</a></li>
-				<li><a href="/admin/sessions" on:click={() => (isOpen = false)}>Manage Sessions</a></li>
-				<li><a href="/admin/attendance" on:click={() => (isOpen = false)}>Member Check-in</a></li>
-			</ul>
-		</div>
-	{/if}
+                <button type="button" class="menu-overlay" aria-label="Close admin navigation" on:click={closeMenu}></button>
+                <nav class="menu" aria-label="Admin">
+                        <h3>Admin Menu</h3>
+                        <ul>
+                                <li><a href="/dashboard" on:click={closeMenu}>Dashboard</a></li>
+                                <li><a href="/admin/workouts" on:click={closeMenu}>My Workouts</a></li>
+                                <li><a href="/admin/create" on:click={closeMenu}>Create Workout</a></li>
+                                <li><a href="/admin/sessions" on:click={closeMenu}>Manage Sessions</a></li>
+                                <li><a href="/admin/attendance" on:click={closeMenu}>Member Check-in</a></li>
+                        </ul>
+                </nav>
+        {/if}
 </div>
 
 <style>
