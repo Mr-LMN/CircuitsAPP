@@ -40,15 +40,49 @@ let currentP1Task = '';
 let currentP2Task = '';
 let soloPrimaryTask = '';
 let soloSecondaryTask = '';
+let stationCategory = DEFAULT_CATEGORY;
+let primaryTaskDetails = { name: '', category: DEFAULT_CATEGORY };
+let secondaryTaskDetails = { name: '', category: DEFAULT_CATEGORY };
+let activeTask = { name: '', category: DEFAULT_CATEGORY };
+let upcomingTask = null;
+let metricCategory = DEFAULT_CATEGORY;
+let hasSessionStarted = false;
+let showPairingControls = workout.mode === 'Partner';
+let nextStationCategory = '';
 
 let rosterStatus = 'idle';
 let rosterError = '';
+let partnerStatusText = '';
 
 let myScoreRef = null;
 let unsubscribe = [];
 
 const createEntryScore = () => ({ reps: '', weight: '', cals: '', dist: '', notes: '' });
 const createCumulativeScore = () => ({ reps: 0, weight: 0, cals: 0, dist: '', notes: '' });
+const DEFAULT_CATEGORY = 'Bodyweight';
+
+function normaliseCategory(category, fallback = '') {
+        const raw = String(category ?? '').trim();
+        if (!raw) return fallback;
+        const lower = raw.toLowerCase();
+        if (lower.includes('cardio')) return 'Cardio Machine';
+        if (lower.includes('resist') || lower.includes('strength') || lower.includes('weight')) return 'Resistance';
+        if (lower.includes('body')) return 'Bodyweight';
+        return raw;
+}
+
+function getMetricLabelForCategory(category) {
+        switch (category) {
+                case 'Resistance':
+                        return 'Reps & Weight';
+                case 'Cardio Machine':
+                        return 'Calories & Distance';
+                case 'Bodyweight':
+                        return 'Reps';
+                default:
+                        return category || '';
+        }
+}
 
 function formatDistance(value) {
         if (!value) return '';
@@ -692,18 +726,32 @@ $: if (liveState.isComplete && !previousCompletionState) {
 
 $: myStationData = myCurrentStationIndex !== -1 ? workout.exercises[myCurrentStationIndex] : null;
 $: nextStationData = myNextStationIndex !== -1 ? workout.exercises[myNextStationIndex] : null;
-$: intervalDuration = liveState?.duration || liveState?.timing?.work || session?.timing?.work || null;
-$: metricLabel = myStationData
-        ? myStationData.category === 'Resistance'
-                ? 'Reps & Weight'
-                : myStationData.category === 'Cardio Machine'
-                ? 'Calories & Distance'
-                : 'Reps'
+$: nextStationCategory = nextStationData
+        ? normaliseCategory(
+                  workout.mode === 'Partner'
+                          ? nextStationData.p1?.category || nextStationData.category
+                          : nextStationData.category,
+                  DEFAULT_CATEGORY
+          )
         : '';
+$: intervalDuration = liveState?.duration || liveState?.timing?.work || session?.timing?.work || null;
 $: hasPendingForCurrent = myCurrentStationIndex >= 0 && pendingStations.has(myCurrentStationIndex);
 
 $: currentP1Task = myStationData?.p1?.task ? String(myStationData.p1.task).trim() : '';
 $: currentP2Task = myStationData?.p2?.task ? String(myStationData.p2.task).trim() : '';
+$: stationCategory = myStationData ? normaliseCategory(myStationData.category, DEFAULT_CATEGORY) : DEFAULT_CATEGORY;
+$: primaryTaskDetails = myStationData
+        ? {
+                  name: currentP1Task || myStationData.name || '',
+                  category: normaliseCategory(myStationData.p1?.category, stationCategory)
+          }
+        : { name: '', category: DEFAULT_CATEGORY };
+$: secondaryTaskDetails = myStationData
+        ? {
+                  name: currentP2Task || primaryTaskDetails.name || myStationData.name || '',
+                  category: normaliseCategory(myStationData.p2?.category, primaryTaskDetails.category)
+          }
+        : { name: '', category: DEFAULT_CATEGORY };
 $: if (workout.mode === 'Partner') {
         if (myPartnerSlot === 0) {
                 myPartnerRole = 'Partner A';
@@ -718,31 +766,80 @@ $: if (workout.mode === 'Partner') {
         myPartnerRole = '';
 }
 $: {
-        if (workout.mode === 'Partner' && myStationData) {
+        if (!myStationData) {
+                soloPrimaryTask = '';
+                soloSecondaryTask = '';
+                myActiveTaskLabel = '';
+                activeTask = { name: '', category: DEFAULT_CATEGORY };
+                upcomingTask = null;
+                metricCategory = DEFAULT_CATEGORY;
+        } else {
                 const fallbackName = myStationData.name || '';
-                const soloPrimary = currentP1Task || currentP2Task || fallbackName;
-                soloPrimaryTask = soloPrimary;
-                soloSecondaryTask = currentP2Task && currentP2Task !== soloPrimary ? currentP2Task : '';
-
-                const primaryTask = currentP1Task || fallbackName || soloPrimary;
-                const secondaryTask = currentP2Task || primaryTask;
+                const primaryName = primaryTaskDetails.name || fallbackName;
+                const secondaryName = secondaryTaskDetails.name || primaryName;
+                const hasDistinctSecondary = Boolean(secondaryTaskDetails.name && secondaryName !== primaryName);
                 const isSecondWorkBlock = liveState?.phaseIndex === 2;
 
-                if (isTrainingSolo) {
-                        myActiveTaskLabel = isSecondWorkBlock ? secondaryTask : primaryTask;
-                } else if (myPartnerSlot === 0) {
-                        myActiveTaskLabel = isSecondWorkBlock ? secondaryTask : primaryTask;
-                } else if (myPartnerSlot === 1) {
-                        myActiveTaskLabel = isSecondWorkBlock ? primaryTask : secondaryTask;
-                } else if (myPartnerSlot >= 0) {
-                        myActiveTaskLabel = primaryTask;
+                soloPrimaryTask = primaryName;
+                soloSecondaryTask = hasDistinctSecondary ? secondaryName : '';
+
+                let nextActive = { ...primaryTaskDetails, name: primaryName };
+                let nextUpcoming = hasDistinctSecondary ? { ...secondaryTaskDetails, name: secondaryName } : null;
+
+                if (workout.mode === 'Partner') {
+                        if (isTrainingSolo || myPartnerSlot === 0) {
+                                if (isSecondWorkBlock && hasDistinctSecondary) {
+                                        nextActive = { ...secondaryTaskDetails, name: secondaryName };
+                                        nextUpcoming = null;
+                                }
+                        } else if (myPartnerSlot === 1) {
+                                if (!isSecondWorkBlock && hasDistinctSecondary) {
+                                        nextActive = { ...secondaryTaskDetails, name: secondaryName };
+                                        nextUpcoming = { ...primaryTaskDetails, name: primaryName };
+                                } else {
+                                        nextActive = { ...primaryTaskDetails, name: primaryName };
+                                        nextUpcoming = null;
+                                }
+                        } else if (myPartnerSlot >= 0) {
+                                nextActive = { ...primaryTaskDetails, name: primaryName };
+                                nextUpcoming = hasDistinctSecondary ? { ...secondaryTaskDetails, name: secondaryName } : null;
+                        }
+                } else if (!hasDistinctSecondary) {
+                        nextUpcoming = null;
+                }
+
+                activeTask = nextActive;
+                upcomingTask = nextUpcoming;
+                myActiveTaskLabel = activeTask.name || fallbackName || primaryName;
+                metricCategory = activeTask.category || stationCategory || DEFAULT_CATEGORY;
+        }
+}
+$: metricLabel = myStationData ? getMetricLabelForCategory(metricCategory) : '';
+$: hasSessionStarted = Number.isFinite(liveState?.phaseIndex) && liveState.phaseIndex >= 0 && !liveState.isComplete;
+$: showPairingControls = workout.mode === 'Partner' && !hasSessionStarted;
+$: {
+        if (rosterStatus === 'joining') {
+                partnerStatusText = 'Adding you to the partner rotation...';
+        } else if (rosterStatus === 'leaving') {
+                partnerStatusText = 'Updating your selection...';
+        } else if (isTrainingSolo) {
+                if (hasJoinedRoster) {
+                        partnerStatusText = "You're locked in to train solo for this partner session.";
+                } else if (rosterError) {
+                        partnerStatusText = "We're unable to add you just yet. Please review the message below.";
                 } else {
-                        myActiveTaskLabel = primaryTask;
+                        partnerStatusText = "We'll load your solo station as soon as it's assigned.";
+                }
+        } else if (wantsPartnerPairing) {
+                if (hasJoinedRoster) {
+                        partnerStatusText = "You're set to rotate with a partner.";
+                } else if (rosterError) {
+                        partnerStatusText = "We're unable to add you just yet. Please review the message below.";
+                } else {
+                        partnerStatusText = "We'll add you as soon as there's an open station.";
                 }
         } else {
-                soloPrimaryTask = myStationData?.name ?? '';
-                soloSecondaryTask = '';
-                myActiveTaskLabel = myStationData?.name ?? '';
+                partnerStatusText = "You're logged to train solo for this session.";
         }
 }
 
@@ -768,7 +865,7 @@ function formatTime(s) {
                 {/if}
         </header>
 
-        {#if workout.mode === 'Partner'}
+        {#if workout.mode === 'Partner' && showPairingControls}
                 <section class="pairing-controls" aria-live="polite">
                         <div class="pairing-copy">
                                 <h2>Partner pairing</h2>
@@ -797,31 +894,7 @@ function formatTime(s) {
                                                 Pair me up
                                         </button>
                                 </div>
-                                <p class="pairing-status" aria-live="polite">
-                                        {#if rosterStatus === 'joining'}
-                                                Adding you to the partner rotation...
-                                        {:else if rosterStatus === 'leaving'}
-                                                Updating your selection...
-                                        {:else if isTrainingSolo}
-                                                {#if hasJoinedRoster}
-                                                        You're locked in to train solo for this partner session.
-                                                {:else if rosterError}
-                                                        We're unable to add you just yet. Please review the message below.
-                                                {:else}
-                                                        We'll load your solo station as soon as it's assigned.
-                                                {/if}
-                                        {:else if wantsPartnerPairing}
-                                                {#if hasJoinedRoster}
-                                                        You're set to rotate with a partner.
-                                                {:else if rosterError}
-                                                        We're unable to add you just yet. Please review the message below.
-                                                {:else}
-                                                        We'll add you as soon as there's an open station.
-                                                {/if}
-                                        {:else}
-                                                You're logged to train solo for this session.
-                                        {/if}
-                                </p>
+                                <p class="pairing-status" aria-live="polite">{partnerStatusText}</p>
                                 {#if pairingLocked}
                                         <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
                                 {/if}
@@ -830,23 +903,56 @@ function formatTime(s) {
                                 {/if}
                         </div>
                 </section>
+        {:else if workout.mode === 'Partner'}
+                <div class="pairing-summary" aria-live="polite">
+                        <div class="summary-row">
+                                <span class={`summary-chip ${isTrainingSolo ? 'solo' : 'partner'}`}>
+                                        {isTrainingSolo ? 'Training solo' : 'Partner rotation'}
+                                </span>
+                                {#if myPartnerRole}
+                                        <span class="summary-chip role">{myPartnerRole}</span>
+                                {/if}
+                                {#if pairingLocked}
+                                        <span class="summary-chip locked">Locked</span>
+                                {/if}
+                        </div>
+                        <p class="pairing-status">{partnerStatusText}</p>
+                        {#if rosterError}<p class="pairing-error">{rosterError}</p>{/if}
+                        {#if pairingLocked}
+                                <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
+                        {/if}
+                </div>
         {/if}
 
         {#if myStationData}
                 <main class="tracker-main">
                         <div class="score-card">
-                                <span class="score-label">Log Your Score</span>
-                                <p class="score-helper">Each field is optional—record whichever metrics you used.</p>
-                                {#if metricLabel || intervalDuration}
-                                        <div class="score-meta">
-                                                {#if metricLabel}<span class="score-chip">{metricLabel}</span>{/if}
-                                                {#if intervalDuration}<span class="score-chip">Interval: {Math.round(intervalDuration)}s</span>{/if}
+                                <header class="score-header">
+                                        <div class="score-title">
+                                                <span class="score-eyebrow">Log your score</span>
+                                                <h2>{myActiveTaskLabel || myStationData.name}</h2>
+                                                <p class="score-subtitle">
+                                                        Station {myCurrentStationIndex + 1} · {myStationData.name}
+                                                </p>
                                         </div>
-                                {/if}
+                                        <div class="score-meta">
+                                                {#if metricLabel}<span class="score-chip emphasis">{metricLabel}</span>{/if}
+                                                {#if activeTask.category && metricLabel !== activeTask.category}
+                                                        <span class="score-chip subtle">{activeTask.category}</span>
+                                                {/if}
+                                                {#if intervalDuration}
+                                                        <span class="score-chip">Interval: {Math.round(intervalDuration)}s</span>
+                                                {/if}
+                                        </div>
+                                </header>
 
-                                {#if myStationData.category === 'Resistance'}
-                                        <div class="input-row column">
-                                                <label>
+                                <p class="score-helper">
+                                        Record the effort you hit for this interval. We'll add it to your running total automatically.
+                                </p>
+
+                                <div class="input-grid" class:two-column={metricCategory === 'Resistance' || metricCategory === 'Cardio Machine'}>
+                                        {#if metricCategory === 'Resistance'}
+                                                <label class="input-field">
                                                         <span>Reps</span>
                                                         <input
                                                                 type="number"
@@ -857,7 +963,7 @@ function formatTime(s) {
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
                                                         />
                                                 </label>
-                                                <label>
+                                                <label class="input-field">
                                                         <span>Weight (kg)</span>
                                                         <input
                                                                 type="number"
@@ -868,10 +974,8 @@ function formatTime(s) {
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'weight', event.target.value)}
                                                         />
                                                 </label>
-                                        </div>
-                                {:else if myStationData.category === 'Cardio Machine'}
-                                        <div class="input-row column">
-                                                <label>
+                                        {:else if metricCategory === 'Cardio Machine'}
+                                                <label class="input-field">
                                                         <span>Calories</span>
                                                         <input
                                                                 type="number"
@@ -882,7 +986,7 @@ function formatTime(s) {
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'cals', event.target.value)}
                                                         />
                                                 </label>
-                                                <label>
+                                                <label class="input-field">
                                                         <span>Distance (m)</span>
                                                         <input
                                                                 type="text"
@@ -892,10 +996,8 @@ function formatTime(s) {
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'dist', event.target.value)}
                                                         />
                                                 </label>
-                                        </div>
-                                {:else}
-                                        <div class="input-row column single-input">
-                                                <label>
+                                        {:else}
+                                                <label class="input-field full">
                                                         <span>Reps</span>
                                                         <input
                                                                 type="number"
@@ -906,20 +1008,31 @@ function formatTime(s) {
                                                                 on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
                                                         />
                                                 </label>
-                                        </div>
-                                {/if}
+                                        {/if}
 
-                                <button
-                                        class="btn btn-save"
-                                        on:click={() => commitStationScore(myCurrentStationIndex)}
-                                        disabled={!hasPendingForCurrent || rosterStatus === 'leaving'}
-                                >
-                                        ✓ Save interval
-                                </button>
+                                        <label class="input-field full notes-field">
+                                                <span>Notes (optional)</span>
+                                                <textarea
+                                                        rows="2"
+                                                        placeholder="Add cues, scaling or modifications"
+                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'notes', event.target.value)}
+                                                >{currentEntries[myCurrentStationIndex].score.notes}</textarea>
+                                        </label>
+                                </div>
 
-                                {#if lastSaveMessage && lastSavedStationIndex === myCurrentStationIndex}
-                                        <p class={`save-feedback ${lastSaveType}`}>{lastSaveMessage}</p>
-                                {/if}
+                                <div class="actions-row">
+                                        <button
+                                                class="btn btn-save"
+                                                on:click={() => commitStationScore(myCurrentStationIndex)}
+                                                disabled={!hasPendingForCurrent || rosterStatus === 'leaving'}
+                                        >
+                                                ✓ Save interval
+                                        </button>
+
+                                        {#if lastSaveMessage && lastSavedStationIndex === myCurrentStationIndex}
+                                                <p class={`save-feedback ${lastSaveType}`}>{lastSaveMessage}</p>
+                                        {/if}
+                                </div>
 
                                 {#if hasTotals(myCurrentStationIndex)}
                                         <div class="totals">
@@ -937,6 +1050,9 @@ function formatTime(s) {
                                                         {#if cumulativeScores[myCurrentStationIndex].score.dist && cumulativeScores[myCurrentStationIndex].score.dist.trim()}
                                                                 <li><span>Distance</span><span>{cumulativeScores[myCurrentStationIndex].score.dist}</span></li>
                                                         {/if}
+                                                        {#if cumulativeScores[myCurrentStationIndex].score.notes && cumulativeScores[myCurrentStationIndex].score.notes.trim()}
+                                                                <li class="notes-total"><span>Notes</span><span>{cumulativeScores[myCurrentStationIndex].score.notes}</span></li>
+                                                        {/if}
                                                 </ul>
                                         </div>
                                 {/if}
@@ -945,14 +1061,24 @@ function formatTime(s) {
 
                 <footer class="station-info">
                         <div class="station-display current">
-                                <h2>NOW: Station {myCurrentStationIndex + 1} - {myStationData.name}</h2>
+                                <div class="station-heading">
+                                        <span class="station-eyebrow">Now</span>
+                                        <h2>{myStationData.name}</h2>
+                                        <p class="station-meta">
+                                                Station {myCurrentStationIndex + 1}
+                                                {#if stationCategory}
+                                                        <span aria-hidden="true">·</span>
+                                                        {stationCategory}
+                                                {/if}
+                                        </p>
+                                </div>
                                 {#if workout.mode === 'Partner'}
                                         {#if isTrainingSolo}
                                                 {#if soloPrimaryTask}
                                                         <p class="start-callout">
-                                                                Training solo—start on <strong>{soloPrimaryTask}</strong>
+                                                                Training solo? Start on <strong>{soloPrimaryTask}</strong>
                                                                 {#if soloSecondaryTask}
-                                                                        , then move to <strong>{soloSecondaryTask}</strong>
+                                                                        , then transition to <strong>{soloSecondaryTask}</strong>
                                                                 {/if}
                                                                 .
                                                         </p>
@@ -964,14 +1090,45 @@ function formatTime(s) {
                                                 </p>
                                         {/if}
                                 {/if}
-                                <div class="task-line"><span class="task-label p1">P1</span><span class="task-text">{myStationData.p1?.task}</span></div>
-                                {#if myStationData.p2?.task}
-                                        <div class="task-line"><span class="task-label p2">P2</span><span class="task-text">{myStationData.p2.task}</span></div>
+                                {#if workout.mode === 'Partner' && upcomingTask && !isTrainingSolo && myPartnerSlot !== -1 && upcomingTask.name !== myActiveTaskLabel}
+                                        <p class="upcoming-note">Next interval: <strong>{upcomingTask.name}</strong></p>
                                 {/if}
+                                <div class="task-list">
+                                        <div class="task-line">
+                                                <span class="task-label p1">P1</span>
+                                                <div class="task-content">
+                                                        <span class="task-text">{myStationData.p1?.task}</span>
+                                                        {#if primaryTaskDetails.category}
+                                                                <span class="task-chip">{primaryTaskDetails.category}</span>
+                                                        {/if}
+                                                </div>
+                                        </div>
+                                        {#if myStationData.p2?.task}
+                                                <div class="task-line">
+                                                        <span class="task-label p2">P2</span>
+                                                        <div class="task-content">
+                                                                <span class="task-text">{myStationData.p2.task}</span>
+                                                                {#if secondaryTaskDetails.category}
+                                                                        <span class="task-chip">{secondaryTaskDetails.category}</span>
+                                                                {/if}
+                                                        </div>
+                                                </div>
+                                        {/if}
+                                </div>
                         </div>
                         {#if nextStationData}
                                 <div class="station-display next">
-                                        <h2>NEXT: Station {myNextStationIndex + 1} - {nextStationData.name}</h2>
+                                        <div class="station-heading">
+                                                <span class="station-eyebrow">Up next</span>
+                                                <h2>{nextStationData.name}</h2>
+                                                <p class="station-meta">
+                                                        Station {myNextStationIndex + 1}
+                                                        {#if nextStationCategory}
+                                                                <span aria-hidden="true">·</span>
+                                                                {nextStationCategory}
+                                                        {/if}
+                                                </p>
+                                        </div>
                                 </div>
                         {/if}
                 </footer>
@@ -1200,6 +1357,60 @@ function formatTime(s) {
         font-size: 0.8rem;
 }
 
+.pairing-summary {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        background: var(--surface-1);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 1.25rem 1.5rem;
+        text-align: left;
+}
+
+.summary-row {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        align-items: center;
+}
+
+.summary-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        border: 1px solid transparent;
+}
+
+.summary-chip.solo {
+        background: rgba(59, 130, 246, 0.16);
+        border-color: rgba(59, 130, 246, 0.35);
+        color: #60a5fa;
+}
+
+.summary-chip.partner {
+        background: rgba(34, 197, 94, 0.16);
+        border-color: rgba(34, 197, 94, 0.35);
+        color: #34d399;
+}
+
+.summary-chip.role {
+        background: rgba(253, 224, 71, 0.16);
+        border-color: rgba(253, 224, 71, 0.35);
+        color: var(--brand-yellow);
+}
+
+.summary-chip.locked {
+        background: rgba(148, 163, 184, 0.12);
+        border-color: rgba(148, 163, 184, 0.3);
+        color: var(--text-muted);
+}
+
 .btn {
         border-radius: 999px;
         padding: 0.65rem 1.5rem;
@@ -1266,31 +1477,62 @@ function formatTime(s) {
 .score-card {
         background: var(--surface-1);
         width: 100%;
-        max-width: 420px;
-        padding: 1.5rem;
-        border-radius: 16px;
+        max-width: 480px;
+        padding: 1.75rem;
+        border-radius: 20px;
         border: 1px solid var(--border-color);
-        text-align: center;
+        text-align: left;
+        box-shadow: 0 24px 60px -45px rgba(15, 23, 42, 0.9);
 }
 
-.score-label {
+.score-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+}
+
+.score-title {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+}
+
+.score-eyebrow {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+}
+
+.score-title h2 {
+        margin: 0;
+        font-size: 1.75rem;
+        color: var(--text-secondary);
+}
+
+.score-subtitle {
+        margin: 0;
         font-size: 0.9rem;
         color: var(--text-muted);
-        text-transform: uppercase;
 }
 
 .score-helper {
-        margin: 0.35rem 0 0;
-        font-size: 0.8rem;
+        margin: 1rem 0 0;
+        font-size: 0.85rem;
         color: var(--text-muted);
+        line-height: 1.4;
 }
 
 .score-meta {
-        margin-top: 0.75rem;
+        margin-top: 0;
         display: flex;
         gap: 0.5rem;
-        justify-content: center;
+        justify-content: flex-end;
         flex-wrap: wrap;
+        align-items: center;
 }
 
 .score-chip {
@@ -1304,49 +1546,94 @@ function formatTime(s) {
         color: var(--text-secondary);
 }
 
-.input-row {
-        display: flex;
-        gap: 1rem;
-        align-items: center;
-        justify-content: center;
-        margin-top: 0.75rem;
+.score-chip.emphasis {
+        background: rgba(253, 224, 71, 0.16);
+        border-color: rgba(253, 224, 71, 0.45);
+        color: var(--brand-yellow);
 }
 
-.input-row.column {
-        flex-direction: column;
-}
-
-.input-row label {
-        width: 100%;
-        text-align: left;
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-}
-
-.input-row label span {
-        font-size: 0.8rem;
+.score-chip.subtle {
+        background: rgba(148, 163, 184, 0.12);
+        border-color: rgba(148, 163, 184, 0.3);
         color: var(--text-muted);
 }
 
-.input-row input {
-        font-size: 2rem;
-        width: 100%;
-        text-align: center;
-        background: var(--deep-space);
-        border: 1px solid var(--border-color);
-        color: var(--text-primary);
-        border-radius: 8px;
-        padding: 0.6rem;
-        font-family: var(--font-display);
+.input-grid {
+        margin-top: 1.5rem;
+        display: grid;
+        gap: 1rem;
 }
 
-.input-row.single-input input {
-        max-width: 100%;
+.input-grid.two-column {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.input-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+}
+
+.input-field.full {
+        grid-column: 1 / -1;
+}
+
+.input-field span {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+}
+
+.input-field input,
+.input-field textarea {
+        font-size: 1.6rem;
+        font-family: var(--font-display);
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        background: var(--deep-space);
+        color: var(--text-primary);
+        padding: 0.65rem 0.85rem;
+        text-align: center;
+}
+
+.input-field textarea {
+        font-size: 0.95rem;
+        font-family: var(--font-body);
+        line-height: 1.5;
+        min-height: 72px;
+        resize: vertical;
+        text-align: left;
+}
+
+.notes-field span {
+        text-transform: none;
+        letter-spacing: normal;
+}
+
+.notes-field textarea {
+        background: rgba(15, 23, 42, 0.85);
+}
+
+.actions-row {
+        margin-top: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: stretch;
+}
+
+.actions-row .btn-save {
+        margin-top: 0;
+}
+
+.actions-row .save-feedback {
+        margin: 0;
+        text-align: center;
 }
 
 .save-feedback {
-        margin-top: 0.75rem;
         font-size: 0.85rem;
 }
 
@@ -1367,16 +1654,19 @@ function formatTime(s) {
 }
 
 .totals {
-        margin-top: 1.25rem;
+        margin-top: 1.5rem;
         text-align: left;
-        background: rgba(15, 23, 42, 0.6);
+        background: rgba(15, 23, 42, 0.65);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 1rem;
+        border-radius: 14px;
+        padding: 1.1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
 }
 
 .totals h3 {
-        margin: 0 0 0.75rem;
+        margin: 0;
         font-size: 0.95rem;
         text-transform: uppercase;
         letter-spacing: 0.08em;
@@ -1395,8 +1685,30 @@ function formatTime(s) {
 .totals li {
         display: flex;
         justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.75rem;
         color: var(--text-primary);
         font-size: 0.95rem;
+}
+
+.totals li span:first-child {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+}
+
+.totals li span:last-child {
+        font-weight: 600;
+        font-size: 0.95rem;
+        text-align: right;
+}
+
+.notes-total span:last-child {
+        white-space: pre-wrap;
+        font-family: var(--font-body);
+        font-size: 0.85rem;
+        font-weight: 400;
 }
 
 .station-info {
@@ -1410,9 +1722,12 @@ function formatTime(s) {
 .station-display {
         background: var(--surface-1);
         border: 1px solid var(--border-color);
-        border-radius: 16px;
-        padding: 1rem;
+        border-radius: 18px;
+        padding: 1.25rem 1.5rem;
         text-align: left;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
 }
 .start-callout {
         margin: 0 0 0.75rem;
@@ -1422,6 +1737,7 @@ function formatTime(s) {
         border: 1px solid rgba(56, 189, 248, 0.25);
         font-size: 0.9rem;
         color: var(--text-secondary);
+        line-height: 1.5;
 }
 .start-callout strong {
         color: var(--brand-yellow);
@@ -1438,25 +1754,68 @@ function formatTime(s) {
         letter-spacing: 0.12em;
 }
 
+.upcoming-note {
+        margin: -0.25rem 0 0.25rem;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+}
+
+.upcoming-note strong {
+        color: var(--text-secondary);
+}
+
 .station-display.current {
         border-left: 4px solid var(--brand-yellow);
+        box-shadow: 0 26px 70px -52px rgba(253, 224, 71, 0.35);
 }
 
 .station-display.next {
-        opacity: 0.6;
+        opacity: 0.75;
 }
 
-.station-info h2 {
-        font-size: 1.1rem;
-        margin-bottom: 0.75rem;
+.station-heading {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+}
+
+.station-eyebrow {
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+}
+
+.station-heading h2 {
+        margin: 0;
+        font-size: 1.4rem;
+        color: var(--text-secondary);
+}
+
+.station-meta {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-muted);
+        display: flex;
+        gap: 0.35rem;
+        align-items: center;
+}
+
+.station-meta span[aria-hidden='true'] {
+        color: var(--text-muted);
+}
+
+.task-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
 }
 
 .task-line {
         display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.9rem;
-        margin-bottom: 0.5rem;
+        align-items: flex-start;
+        gap: 0.75rem;
+        font-size: 0.95rem;
 }
 
 .task-label {
@@ -1470,6 +1829,29 @@ function formatTime(s) {
         justify-content: center;
 }
 
+.task-content {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        align-items: flex-start;
+}
+
+.task-text {
+        color: var(--text-primary);
+        font-size: 1rem;
+        font-weight: 500;
+}
+
+.task-chip {
+        background: rgba(148, 163, 184, 0.12);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 999px;
+        padding: 0.2rem 0.65rem;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+}
 .task-label.p1 {
         background: #34d39933;
         color: #34d399;
