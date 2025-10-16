@@ -99,14 +99,14 @@ function formatDistance(value) {
 }
 
 let currentEntries = workout.exercises.map((ex) => ({
-        stationName: ex.name,
-        category: ex.category,
+        stationName: ex.name ?? '',
+        category: ex.category ?? '',
         score: createEntryScore()
 }));
 
 let cumulativeScores = workout.exercises.map((ex) => ({
-        stationName: ex.name,
-        category: ex.category,
+        stationName: ex.name ?? '',
+        category: ex.category ?? '',
         score: createCumulativeScore()
 }));
 
@@ -550,9 +550,24 @@ async function saveFinalScores() {
                                 cleaned.notes = String(item.score.notes).trim();
                         }
 
-                        return Object.keys(cleaned).length
-                                ? { stationName: item.stationName, category: item.category, score: cleaned }
-                                : null;
+                        if (!Object.keys(cleaned).length) {
+                                return null;
+                        }
+
+                        const stationName =
+                                typeof item.stationName === 'string' && item.stationName.trim()
+                                        ? item.stationName.trim()
+                                        : null;
+                        const category =
+                                typeof item.category === 'string' && item.category.trim()
+                                        ? item.category.trim()
+                                        : null;
+
+                        return {
+                                ...(stationName !== null ? { stationName } : {}),
+                                ...(category !== null ? { category } : {}),
+                                score: cleaned
+                        };
                 })
                 .filter(Boolean);
 
