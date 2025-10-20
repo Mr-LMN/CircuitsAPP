@@ -3,6 +3,7 @@
 import { onMount } from 'svelte';
 import { db } from '$lib/firebase';
 import { normaliseStationAssignments, serialiseStationAssignments } from '$lib/stationAssignments';
+import { buildChipperGroups } from '$lib/chipper';
 import {
         doc,
         onSnapshot,
@@ -20,49 +21,6 @@ import { user } from '$lib/store';
 export let data;
 const { session, workout } = data;
 const isChipperMode = workout.mode === 'Chipper';
-
-function buildChipperGroups(steps = []) {
-        if (!Array.isArray(steps)) return [];
-        const buckets = [];
-        const lookup = Object.create(null);
-
-        steps.forEach((step, index) => {
-                const repsValue = Number(step?.reps);
-                const numericReps = Number.isFinite(repsValue) && repsValue > 0 ? Math.round(repsValue) : null;
-                const keyLabel = numericReps !== null ? `reps-${numericReps}` : 'other';
-
-                if (!lookup[keyLabel]) {
-                        lookup[keyLabel] = {
-                                reps: numericReps ?? 'Other',
-                                items: []
-                        };
-                        buckets.push(lookup[keyLabel]);
-                }
-
-                lookup[keyLabel].items.push({
-                        name: step?.name ?? '',
-                        category: step?.category ?? '',
-                        order: index + 1
-                });
-        });
-
-        return buckets
-                .sort((a, b) => {
-                        const isNumA = typeof a.reps === 'number';
-                        const isNumB = typeof b.reps === 'number';
-                        if (isNumA && isNumB) return b.reps - a.reps;
-                        if (isNumA) return -1;
-                        if (isNumB) return 1;
-                        return String(a.reps).localeCompare(String(b.reps));
-                })
-                .map((bucket) => ({
-                        reps: bucket.reps,
-                        items: bucket.items.map((item) => ({
-                                ...item,
-                                name: item.name || 'Movement'
-                        }))
-                }));
-}
 
 let chipperGroups = [];
 let chipperFinisher = null;
