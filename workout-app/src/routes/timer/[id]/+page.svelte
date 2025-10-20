@@ -10,6 +10,10 @@ export let data;
 const { workout, sessionId } = data;
 const isPartnerMode = workout.mode === 'Partner';
 const isChipperMode = workout.mode === 'Chipper';
+
+const BASE_DEFAULT_TIMING = { work: 60, swap: 15, move: 15, rounds: 1 };
+const CHIPPER_DEFAULT_TIMING = { work: 20 * 60, swap: 0, move: 0, rounds: 1 };
+const DEFAULT_TIMING = isChipperMode ? CHIPPER_DEFAULT_TIMING : BASE_DEFAULT_TIMING;
 let chipperSteps = isChipperMode ? workout.chipper?.steps ?? [] : [];
 let chipperGroups = isChipperMode ? buildChipperGroups(chipperSteps) : [];
 let chipperFinisher = isChipperMode ? workout.chipper?.finisher ?? null : null;
@@ -29,11 +33,21 @@ function whistleBell() { try { const ctx = getCtx(); for (let i = 0; i < 2; i +=
 function countBeep(n) { const f = { 3: 520, 2: 680, 1: 940 }; tone(f[n] || 720, 180, 'sine', 0.35); }
 
 // --- Session Config & Timer State ---
-const DEFAULT_TIMING = { work: 60, swap: 15, move: 15, rounds: 1 };
 let sessionConfig = { ...DEFAULT_TIMING };
+let chipperDurationMinutes = Math.max(1, Math.round(DEFAULT_TIMING.work / 60));
 
 function normaliseTimingValues(source = {}) {
         const next = { ...DEFAULT_TIMING, ...sessionConfig };
+
+        if (isChipperMode) {
+                const workValue = Number(source.work ?? next.work);
+                next.work = Number.isFinite(workValue) && workValue > 0 ? Math.round(workValue) : DEFAULT_TIMING.work;
+                next.swap = 0;
+                next.move = 0;
+                next.rounds = 1;
+                return next;
+        }
+
         ['work', 'swap', 'move'].forEach((key) => {
                 const value = Number(source[key]);
                 if (Number.isFinite(value)) {
@@ -55,6 +69,24 @@ let state = {
 phase: 'Ready', phaseIndex: -1, remaining: timingValue('work'), duration: timingValue('work'),
 currentStation: 0, currentRound: 1, isRunning: false, isComplete: false, lastCue: 0
 };
+
+$: if (isChipperMode) {
+        const derivedMinutes = Math.max(1, Math.round(Number(sessionConfig.work) / 60) || 1);
+        if (derivedMinutes !== chipperDurationMinutes) {
+                chipperDurationMinutes = derivedMinutes;
+        }
+}
+
+function setChipperDurationMinutes(value) {
+        const minutes = Math.max(1, Math.round(Number(value) || 0));
+        chipperDurationMinutes = minutes;
+        sessionConfig = { ...sessionConfig, work: minutes * 60, swap: 0, move: 0, rounds: 1 };
+        if (state.phaseIndex === -1) {
+                state.remaining = timingValue('work');
+                state.duration = timingValue('work');
+                state = state;
+        }
+}
 let timerId = null;
 let isSetupVisible = false;
 let showQr = false;
@@ -62,30 +94,34 @@ let sessionUnsubscribe = null;
 
 // --- Roster Logic ---
 let totalStations = workout.exercises?.length ?? 0;
+if (isChipperMode && totalStations === 0) {
+        totalStations = 1;
+}
 let totalTime = 0;
-let stationAssignments = (workout.exercises ?? []).map(() => []);
-let assignmentInputs = (workout.exercises ?? []).map(() => '');
+let stationAssignments = Array.from({ length: totalStations }, () => []);
+let assignmentInputs = Array.from({ length: totalStations }, () => '');
 function parseAssignments(value = '') { return value.split(/[\n,]/).map(c => c.trim()).filter(Boolean).map(c => c.toUpperCase()); }
 async function persistSessionSetup() {
 if (!sessionRef) return;
 try {
 const normalisedTiming = normaliseTimingValues(sessionConfig);
 sessionConfig = normalisedTiming;
-await setDoc(
- sessionRef,
- {
- timing: normalisedTiming,
- stationAssignments: serialiseStationAssignments(stationAssignments, totalStations)
- },
- { merge: true }
- );
+const payload = {
+ timing: normalisedTiming
+};
+if (!isChipperMode) {
+ payload.stationAssignments = serialiseStationAssignments(stationAssignments, totalStations);
+}
+await setDoc(sessionRef, payload, { merge: true });
 } catch (error) {
 console.error('Failed to save session setup', error);
 }
 }
 function commitAllAssignments() {
+if (!isChipperMode) {
 stationAssignments = stationAssignments.map((codes, i) => parseAssignments(assignmentInputs[i] ?? codes.join(', ')));
 assignmentInputs = stationAssignments.map(codes => codes.join(', '));
+}
 sessionConfig = normaliseTimingValues(sessionConfig);
 void persistSessionSetup();
 if (state.phaseIndex === -1) {
@@ -96,11 +132,19 @@ state.duration = timingValue('work');
 
 // --- Reactive Derivations ---
 $: movesCompleted = totalStations > 0 ? (state.currentRound - 1) * totalStations + state.currentStation : 0;
-$: stationRoster = (workout.exercises ?? []).map((_, targetIndex) => {
-if (!totalStations) return []; const roster = [];
-stationAssignments.forEach((codes, startIndex) => { if (codes?.length) { const dest = (startIndex + movesCompleted) % totalStations; if (dest === targetIndex) roster.push(...codes); } });
-return roster;
-});
+$: stationRoster = isChipperMode
+        ? (workout.exercises ?? []).map(() => [])
+        : (workout.exercises ?? []).map((_, targetIndex) => {
+                if (!totalStations) return [];
+                const roster = [];
+                stationAssignments.forEach((codes, startIndex) => {
+                        if (codes?.length) {
+                                const dest = (startIndex + movesCompleted) % totalStations;
+                                if (dest === targetIndex) roster.push(...codes);
+                        }
+                });
+                return roster;
+        });
 $: progress = state.duration > 0 ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100)) : 0;
 $: {
         const roundsCount = Math.max(1, Math.round(Number(sessionConfig.rounds) || 1));
@@ -139,7 +183,7 @@ p1: currentStation.p1?.task || currentStation.p1_task || currentStation.name,
 p2: currentStation.p2?.task || currentStation.p2_task || ''
 }
 } : null,
-stationAssignments: serialiseStationAssignments(stationAssignments, totalStations),
+ stationAssignments: isChipperMode ? {} : serialiseStationAssignments(stationAssignments, totalStations),
 updatedAt: serverTimestamp(),
 ...overrides
 };
@@ -165,6 +209,20 @@ const workDuration = Math.max(1, timingValue('work'));
 const swapDuration = timingValue('swap');
 const moveDuration = timingValue('move');
 const roundsCount = Math.max(1, Math.round(Number(sessionConfig.rounds) || 1));
+
+if (isChipperMode) {
+if (nextPhaseIndex === 0) {
+state.phaseIndex = 0;
+state.phase = 'CHIPPER CAP';
+state.currentStation = 0;
+state.remaining = state.duration = workDuration;
+whistleBell();
+} else {
+workoutComplete();
+}
+broadcastLiveState(true);
+return;
+}
 
 if (workout.mode === 'Partner') {
 if (nextPhaseIndex === 0) {
@@ -257,7 +315,25 @@ function handleQrOverlayInteraction(event) {
         event.preventDefault?.();
         closeQr();
 }
-function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0')); }
+function formatTime(seconds) {
+        const secs = Math.max(0, Math.ceil(Number(seconds) || 0));
+        const minutes = Math.floor(secs / 60);
+        const remainder = secs % 60;
+        return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+}
+
+function formatMinutesLabel(seconds) {
+        const totalSeconds = Math.max(0, Math.round(Number(seconds) || 0));
+        const minutes = Math.floor(totalSeconds / 60);
+        const remainder = totalSeconds % 60;
+        if (minutes <= 0) {
+                return remainder > 0 ? `${remainder}s` : '0 min';
+        }
+        if (remainder === 0) {
+                return `${minutes} min`;
+        }
+        return `${minutes}m ${String(remainder).padStart(2, '0')}s`;
+}
 
 // NEW: Functions for new control buttons
 function skipPhase() {
@@ -291,7 +367,7 @@ state.remaining = timingValue('work');
 state.duration = timingValue('work');
 }
 }
-if (sessionData?.stationAssignments) {
+if (!isChipperMode && sessionData?.stationAssignments) {
 const normalised = normaliseStationAssignments(sessionData.stationAssignments, totalStations);
 stationAssignments = normalised;
 assignmentInputs = normalised.map((codes) => codes.join(', '));
@@ -311,7 +387,7 @@ sessionUnsubscribe = onSnapshot(sessionRef, (snap) => {
  state.duration = timingValue('work');
  }
  }
-if (sessionData?.stationAssignments) {
+if (!isChipperMode && sessionData?.stationAssignments) {
 const normalised = normaliseStationAssignments(sessionData.stationAssignments, totalStations);
 stationAssignments = normalised;
 if (!isSetupVisible) {
@@ -341,19 +417,34 @@ console.error('Failed to initialise live state', error);
 <header class="modal-header">
 <div>
 <h2>Session Setup</h2>
-<p>Adjust timing and assign staff before starting the clock.</p>
+<p>{isChipperMode ? 'Set the countdown duration before starting the clock.' : 'Adjust timing and assign staff before starting the clock.'}</p>
 </div>
 <button class="close-btn" on:click={closeSetup} aria-label="Close setup">×</button>
 </header>
 <section class="modal-section">
 <h3>Timing</h3>
 <div class="timing-grid">
-<label for="setup-work">Work (seconds)<input id="setup-work" type="number" min="1" bind:value={sessionConfig.work} /></label>
-<label for="setup-swap">Swap (seconds)<input id="setup-swap" type="number" min="0" bind:value={sessionConfig.swap} disabled={workout.mode !== 'Partner'} /></label>
-<label for="setup-move">Move (seconds)<input id="setup-move" type="number" min="0" bind:value={sessionConfig.move} /></label>
-<label for="setup-rounds">Rounds<input id="setup-rounds" type="number" min="1" bind:value={sessionConfig.rounds} /></label>
+        {#if isChipperMode}
+                <label for="setup-chipper-duration">Duration (minutes)
+                        <input
+                                id="setup-chipper-duration"
+                                type="number"
+                                min="1"
+                                inputmode="numeric"
+                                value={chipperDurationMinutes}
+                                on:input={(event) => setChipperDurationMinutes(event.target?.value)}
+                                on:change={(event) => setChipperDurationMinutes(event.target?.value)}
+                        />
+                </label>
+        {:else}
+                <label for="setup-work">Work (seconds)<input id="setup-work" type="number" min="1" bind:value={sessionConfig.work} /></label>
+                <label for="setup-swap">Swap (seconds)<input id="setup-swap" type="number" min="0" bind:value={sessionConfig.swap} disabled={workout.mode !== 'Partner'} /></label>
+                <label for="setup-move">Move (seconds)<input id="setup-move" type="number" min="0" bind:value={sessionConfig.move} /></label>
+                <label for="setup-rounds">Rounds<input id="setup-rounds" type="number" min="1" bind:value={sessionConfig.rounds} /></label>
+        {/if}
 </div>
 </section>
+{#if !isChipperMode}
 <section class="modal-section">
 <h3>Station Roster</h3>
 <p class="modal-help">Enter member or staff initials separated by commas. We'll rotate them through the circuit automatically.</p>
@@ -369,6 +460,7 @@ console.error('Failed to initialise live state', error);
 {/each}
 </div>
 </section>
+{/if}
 <div class="modal-actions"><button class="ghost" on:click={closeSetup}>Done</button></div>
 </div>
 </div>
@@ -391,12 +483,17 @@ console.error('Failed to initialise live state', error);
 <span class="mode-chip">{workout.mode}</span>
 </div>
 <div class="session-highlights">
-<div class="highlight"><span class="label">Work</span><span class="value">{sessionConfig.work}s</span></div>
-{#if workout.mode === 'Partner'}
-<div class="highlight"><span class="label">Swap</span><span class="value">{sessionConfig.swap}s</span></div>
-{/if}
-<div class="highlight"><span class="label">Move</span><span class="value">{sessionConfig.move}s</span></div>
-<div class="highlight"><span class="label">Rounds</span><span class="value">{sessionConfig.rounds}</span></div>
+        {#if isChipperMode}
+                <div class="highlight"><span class="label">Duration</span><span class="value">{formatMinutesLabel(sessionConfig.work)}</span></div>
+                <div class="highlight"><span class="label">Format</span><span class="value">Solo Flow</span></div>
+        {:else}
+                <div class="highlight"><span class="label">Work</span><span class="value">{sessionConfig.work}s</span></div>
+                {#if workout.mode === 'Partner'}
+                        <div class="highlight"><span class="label">Swap</span><span class="value">{sessionConfig.swap}s</span></div>
+                {/if}
+                <div class="highlight"><span class="label">Move</span><span class="value">{sessionConfig.move}s</span></div>
+                <div class="highlight"><span class="label">Rounds</span><span class="value">{sessionConfig.rounds}</span></div>
+        {/if}
 </div>
 <div class="header-actions">
 <button class="ghost" on:click={openSetup}>Setup</button>
@@ -409,7 +506,7 @@ console.error('Failed to initialise live state', error);
     <section class="chipper-overview" aria-labelledby="chipper-flow-title">
       <div class="chipper-header">
         <h2 id="chipper-flow-title">Chipper flow</h2>
-        <p>Work from the top of the pyramid down, then finish on the machine for max calories.</p>
+        <p>Work from the top of the pyramid down, then finish on the machine for max calories. This is a solo flow—no station rotations.</p>
       </div>
 
       {#if chipperGroups.length}
@@ -480,7 +577,9 @@ console.error('Failed to initialise live state', error);
         </div>
         <footer class="station-card__roster">
           <div class="roster-chips">
-            {#if stationRoster[i]?.length}
+            {#if isChipperMode}
+              <span class="roster-empty">SOLO</span>
+            {:else if stationRoster[i]?.length}
               {#each stationRoster[i] as code, codeIndex (`${code}-${codeIndex}`)}
                 <span>{code}</span>
               {/each}
@@ -501,9 +600,14 @@ console.error('Failed to initialise live state', error);
 </main>
 <footer class="timer-footer">
 <div class="meta-info">
-<span>Station {Math.min(state.currentStation + 1, totalStations)}/{totalStations}</span>
-<span>Round {Math.min(state.currentRound, sessionConfig.rounds)}/{sessionConfig.rounds}</span>
-<span>Total: ~{totalTime} min</span>
+        {#if isChipperMode}
+                <span>Chipper session • Solo flow</span>
+                <span>Cap: {formatMinutesLabel(sessionConfig.work)}</span>
+        {:else}
+                <span>Station {Math.min(state.currentStation + 1, totalStations)}/{totalStations}</span>
+                <span>Round {Math.min(state.currentRound, sessionConfig.rounds)}/{sessionConfig.rounds}</span>
+                <span>Total: ~{totalTime} min</span>
+        {/if}
 </div>
 <div class="control-row">
 <button class="secondary" on:click={resetTimer}>Reset</button>
