@@ -7,6 +7,7 @@
   import { db } from '$lib/firebase';
   import { collection, addDoc, serverTimestamp, getDocs, doc, setDoc } from 'firebase/firestore';
   import { user } from '$lib/store';
+  import { DEFAULT_CHIPPER_REP_SCHEME, createDefaultChipperStep, normaliseChipperSteps, hasIncompleteChipperStep } from '$lib/chipper';
 
   const FALLBACK_CATEGORIES = ['Bodyweight', 'Cardio Machine', 'Resistance'];
 
@@ -33,6 +34,32 @@
     };
   }
 
+  function getDefaultChipperSteps() {
+    return DEFAULT_CHIPPER_REP_SCHEME.map((_, index) => createDefaultChipperStep(index, defaultCategory));
+  }
+
+  function sanitizeChipperStep(step, index = 0) {
+    const schemeIndex = Math.min(index, DEFAULT_CHIPPER_REP_SCHEME.length - 1);
+    const fallback = DEFAULT_CHIPPER_REP_SCHEME[schemeIndex] ?? 10;
+    const repsValue = Number(step?.reps);
+    return {
+      name: step?.name ?? '',
+      reps: Number.isFinite(repsValue) && repsValue > 0 ? Math.round(repsValue) : Math.round(fallback),
+      category: sanitizeCategory(step?.category)
+    };
+  }
+
+  function sanitizeFinisher(finisher = {}) {
+    const defaultDescription = 'Max calories until the clock hits zero.';
+    const rawName = typeof finisher?.name === 'string' ? finisher.name.trim() : '';
+    const rawDescription = typeof finisher?.description === 'string' ? finisher.description.trim() : '';
+    return {
+      name: rawName || 'Max Calories',
+      description: rawDescription || defaultDescription,
+      category: sanitizeCategory(finisher?.category)
+    };
+  }
+
   function sanitizeCategory(category) {
     return categoryOptions.includes(category) ? category : defaultCategory;
   }
@@ -41,7 +68,14 @@
     return value === 'P2' ? 'P2' : 'P1';
   }
 
-  let exercises = mode === 'Partner' ? [getDefaultPartnerStation()] : [getDefaultIndividualExercise()];
+  let exercises =
+    mode === 'Partner'
+      ? [getDefaultPartnerStation()]
+      : mode === 'Chipper'
+      ? getDefaultChipperSteps()
+      : [getDefaultIndividualExercise()];
+
+  let chipperFinisher = sanitizeFinisher({ category: 'Cardio Machine' });
 
   let exerciseLibrary = [];
   let allExerciseNames = [];
@@ -73,17 +107,21 @@
         : [...FALLBACK_CATEGORIES].sort((a, b) => a.localeCompare(b));
     defaultCategory = categoryOptions[0];
 
-    exercises =
-      mode === 'Partner'
-        ? exercises.map((exercise) => ({
-            ...exercise,
-            p1: { ...exercise.p1, category: sanitizeCategory(exercise.p1?.category) },
-            p2: { ...exercise.p2, category: sanitizeCategory(exercise.p2?.category) }
-          }))
-        : exercises.map((exercise) => ({
-            ...exercise,
-            category: sanitizeCategory(exercise.category)
-          }));
+    if (mode === 'Partner') {
+      exercises = exercises.map((exercise) => ({
+        ...exercise,
+        p1: { ...exercise.p1, category: sanitizeCategory(exercise.p1?.category) },
+        p2: { ...exercise.p2, category: sanitizeCategory(exercise.p2?.category) }
+      }));
+    } else if (mode === 'Chipper') {
+      exercises = exercises.map((step, index) => sanitizeChipperStep(step, index));
+      chipperFinisher = sanitizeFinisher(chipperFinisher);
+    } else {
+      exercises = exercises.map((exercise) => ({
+        ...exercise,
+        category: sanitizeCategory(exercise.category)
+      }));
+    }
   });
 
   $: allExerciseNames = Array.from(
@@ -92,8 +130,11 @@
       ...(
         mode === 'Partner'
           ? exercises.flatMap((exercise) => [exercise.p1?.task, exercise.p2?.task])
+          : mode === 'Chipper'
+          ? exercises.map((exercise) => exercise.name)
           : exercises.map((exercise) => exercise.name)
-      ).filter((name) => Boolean(name))
+      ).filter((name) => Boolean(name)),
+      ...(mode === 'Chipper' && chipperFinisher.name ? [chipperFinisher.name] : [])
     ])
   ).sort((a, b) => a.localeCompare(b));
 
@@ -109,14 +150,25 @@
     });
 
   $: if (mode !== previousMode) {
-    exercises = mode === 'Partner' ? [getDefaultPartnerStation()] : [getDefaultIndividualExercise()];
+    if (mode === 'Partner') {
+      exercises = [getDefaultPartnerStation()];
+    } else if (mode === 'Chipper') {
+      exercises = getDefaultChipperSteps();
+      chipperFinisher = sanitizeFinisher(chipperFinisher);
+    } else {
+      exercises = [getDefaultIndividualExercise()];
+    }
     previousMode = mode;
   }
 
   function addExercise() {
     exercises = [
       ...exercises,
-      mode === 'Partner' ? getDefaultPartnerStation(exercises.length) : getDefaultIndividualExercise()
+      mode === 'Partner'
+        ? getDefaultPartnerStation(exercises.length)
+        : mode === 'Chipper'
+        ? sanitizeChipperStep(createDefaultChipperStep(exercises.length, defaultCategory), exercises.length)
+        : getDefaultIndividualExercise()
     ];
   }
 
@@ -160,6 +212,27 @@
       return;
     }
 
+    if (mode === 'Chipper') {
+      for (let i = 0; i < exercises.length; i += 1) {
+        const step = exercises[i];
+        if (!step.name?.trim?.()) {
+          const updatedStep = {
+            ...step,
+            name: libraryExercise.name,
+            category
+          };
+          exercises = exercises.map((ex, idx) => (idx === i ? updatedStep : ex));
+          return;
+        }
+      }
+
+      const newStep = sanitizeChipperStep(createDefaultChipperStep(exercises.length, category), exercises.length);
+      newStep.name = libraryExercise.name;
+      newStep.category = category;
+      exercises = [...exercises, newStep];
+      return;
+    }
+
     const newExercise = getDefaultIndividualExercise();
     newExercise.name = libraryExercise.name;
     newExercise.category = category;
@@ -176,6 +249,12 @@
         const p2Task = exercise.p2?.task?.trim?.();
         return !stationName || !p1Task || !p2Task;
       });
+    }
+
+    if (mode === 'Chipper') {
+      const hasInvalidStep = exercises.some((step) => hasIncompleteChipperStep(step));
+      const finisherName = chipperFinisher.name?.trim?.();
+      return hasInvalidStep || !finisherName;
     }
 
     return exercises.some((exercise) => !exercise.name?.trim?.());
@@ -266,57 +345,84 @@
     successMessage = '';
 
     try {
-      const normalizedExercises =
-        mode === 'Partner'
-          ? exercises.map((exercise, index) => ({
-              name: exercise.name?.trim?.() || `Station ${index + 1}`,
-              p1: {
-                task: exercise.p1?.task?.trim?.() ?? '',
-                category: sanitizeCategory(exercise.p1?.category),
-                equipment: Array.isArray(exercise.p1?.equipment) ? exercise.p1.equipment : []
-              },
-              p2: {
-                task: exercise.p2?.task?.trim?.() ?? '',
-                category: sanitizeCategory(exercise.p2?.category),
-                equipment: Array.isArray(exercise.p2?.equipment) ? exercise.p2.equipment : []
-              },
-              startsOn: normalizeStartsOn(exercise.startsOn)
-            }))
-          : exercises.map((exercise) => ({
-              name: exercise.name?.trim?.() ?? '',
-              description: exercise.description?.trim?.() ?? '',
-              category: sanitizeCategory(exercise.category),
-              equipment: Array.isArray(exercise.equipment) ? exercise.equipment : []
-            }));
+    let normalizedExercises = [];
+    let chipperPayload = null;
 
-      const workoutData = {
-        title: trimmedTitle,
-        type,
-        mode,
-        isBenchmark,
-        notes: notes?.trim?.() ?? '',
-        exercises: normalizedExercises,
-        creatorId: currentUser.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+    if (mode === 'Partner') {
+      normalizedExercises = exercises.map((exercise, index) => ({
+        name: exercise.name?.trim?.() || `Station ${index + 1}`,
+        p1: {
+          task: exercise.p1?.task?.trim?.() ?? '',
+          category: sanitizeCategory(exercise.p1?.category),
+          equipment: Array.isArray(exercise.p1?.equipment) ? exercise.p1.equipment : []
+        },
+        p2: {
+          task: exercise.p2?.task?.trim?.() ?? '',
+          category: sanitizeCategory(exercise.p2?.category),
+          equipment: Array.isArray(exercise.p2?.equipment) ? exercise.p2.equipment : []
+        },
+        startsOn: normalizeStartsOn(exercise.startsOn)
+      }));
+    } else if (mode === 'Chipper') {
+      const steps = normaliseChipperSteps(exercises, sanitizeCategory);
+      const finisher = sanitizeFinisher(chipperFinisher);
+      chipperPayload = {
+        steps,
+        finisher
       };
 
-      await addDoc(collection(db, 'workouts'), workoutData);
-
-      for (const exercise of normalizedExercises) {
-        const namesToPersist =
-          mode === 'Partner'
-            ? [exercise.p1.task, exercise.p2.task]
-            : [exercise.name];
-
-        for (const rawName of namesToPersist) {
-          const exerciseName = rawName?.trim?.();
-          if (!exerciseName) continue;
-
-          const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
-          await setDoc(exerciseRef, { name: exerciseName }, { merge: true });
+      normalizedExercises = [
+        {
+          name: finisher.name?.trim?.() || 'Max Calories',
+          description: finisher.description?.trim?.() || 'Max calories until the clock hits zero.',
+          category: sanitizeCategory(finisher.category),
+          isFinisher: true,
+          metric: 'Calories'
         }
-      }
+      ];
+    } else {
+      normalizedExercises = exercises.map((exercise) => ({
+        name: exercise.name?.trim?.() ?? '',
+        description: exercise.description?.trim?.() ?? '',
+        category: sanitizeCategory(exercise.category),
+        equipment: Array.isArray(exercise.equipment) ? exercise.equipment : []
+      }));
+    }
+
+    const workoutData = {
+      title: trimmedTitle,
+      type,
+      mode,
+      isBenchmark,
+      notes: notes?.trim?.() ?? '',
+      exercises: normalizedExercises,
+      chipper: chipperPayload,
+      creatorId: currentUser.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    await addDoc(collection(db, 'workouts'), workoutData);
+
+    const namesToPersist =
+      mode === 'Partner'
+        ? normalizedExercises.flatMap((exercise) => [exercise.p1.task, exercise.p2.task])
+        : mode === 'Chipper'
+        ? [
+            ...new Set([
+              ...chipperPayload.steps.map((step) => step.name),
+              chipperPayload.finisher?.name ?? ''
+            ])
+          ]
+        : normalizedExercises.map((exercise) => exercise.name);
+
+    for (const rawName of namesToPersist) {
+      const exerciseName = rawName?.trim?.();
+      if (!exerciseName) continue;
+
+      const exerciseRef = doc(db, 'exercises', exerciseName.toLowerCase());
+      await setDoc(exerciseRef, { name: exerciseName }, { merge: true });
+    }
 
       successMessage = 'Workout created successfully! Redirecting...';
       setTimeout(() => goto(workoutsUrl), 1200);
@@ -478,6 +584,7 @@
         <select id="mode" bind:value={mode}>
           <option>Individual</option>
           <option>Partner</option>
+          <option>Chipper</option>
         </select>
       </div>
     </div>
@@ -567,6 +674,97 @@
             </div>
           </div>
         {/each}
+      {:else if mode === 'Chipper'}
+        <div class="chipper-editor">
+          <header class="chipper-heading">
+            <h3>Chipper sequence</h3>
+            <p>List the movements in order. We'll display them as an inverted pyramid on the live timer.</p>
+          </header>
+
+          <div class="chipper-grid chipper-grid-header" aria-hidden="true">
+            <span>Movement</span>
+            <span>Reps</span>
+            <span>Category</span>
+          </div>
+
+          {#each exercises as step, index}
+            <div class="chipper-grid">
+              <div class="chipper-movement">
+                <span class="chipper-index" aria-hidden="true">#{index + 1}</span>
+                <label class="sr-only" for={`chipper-move-${index}`}>Movement {index + 1}</label>
+                <input
+                  id={`chipper-move-${index}`}
+                  type="text"
+                  bind:value={step.name}
+                  placeholder={`Exercise #${index + 1}`}
+                  required
+                  list="exercise-suggestions"
+                />
+              </div>
+              <div class="chipper-reps">
+                <label class="sr-only" for={`chipper-reps-${index}`}>Repetitions for movement {index + 1}</label>
+                <input
+                  id={`chipper-reps-${index}`}
+                  type="number"
+                  min="1"
+                  inputmode="numeric"
+                  bind:value={step.reps}
+                  required
+                />
+              </div>
+              <div class="chipper-category">
+                <label class="sr-only" for={`chipper-cat-${index}`}>Category for movement {index + 1}</label>
+                <select id={`chipper-cat-${index}`} bind:value={step.category}>
+                  {#each categoryOptions as option}
+                    <option>{option}</option>
+                  {/each}
+                </select>
+              </div>
+              <button
+                type="button"
+                class="remove-btn"
+                on:click={() => removeExercise(index)}
+                aria-label={`Remove movement ${index + 1}`}
+              >
+                &times;
+              </button>
+            </div>
+          {/each}
+
+          <div class="chipper-finisher">
+            <h4>Finisher</h4>
+            <p>
+              Once the chipper is complete, athletes head straight into this effort and log their calories on the live timer.
+            </p>
+            <div class="finisher-grid">
+              <div class="finisher-name">
+                <label for="finisher-name">Finisher name</label>
+                <input
+                  id="finisher-name"
+                  type="text"
+                  bind:value={chipperFinisher.name}
+                  placeholder="Max Calories"
+                  required
+                />
+              </div>
+              <div class="finisher-category">
+                <label for="finisher-category">Category</label>
+                <select id="finisher-category" bind:value={chipperFinisher.category}>
+                  {#each categoryOptions as option}
+                    <option>{option}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+            <label for="finisher-notes" class="finisher-notes-label">Description (optional)</label>
+            <input
+              id="finisher-notes"
+              type="text"
+              bind:value={chipperFinisher.description}
+              placeholder="E.g. Max calories on the Echo Bike"
+            />
+          </div>
+        </div>
       {:else}
         {#each exercises as exercise, index}
           <div class="exercise-item">
@@ -594,7 +792,7 @@
 
       <div class="exercise-actions">
         <button type="button" class="secondary-btn" on:click={addExercise}>
-          {mode === 'Partner' ? '+ Add Station' : '+ Add Exercise'}
+          {mode === 'Partner' ? '+ Add Station' : mode === 'Chipper' ? '+ Add Movement' : '+ Add Exercise'}
         </button>
         <button
           type="button"
@@ -701,6 +899,138 @@
     font-size: 0.85rem;
     color: var(--text-muted);
     margin: 0;
+  }
+
+  .chipper-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    background: var(--deep-space);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .chipper-heading h3 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .chipper-heading p {
+    margin: 0.25rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .chipper-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 120px 180px auto;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .chipper-grid + .chipper-grid {
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.85rem;
+    margin-top: 0.85rem;
+  }
+
+  .chipper-grid-header {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.35rem;
+  }
+
+  .chipper-grid-header span:last-child {
+    justify-self: center;
+  }
+
+  .chipper-movement {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .chipper-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    background: var(--surface-1);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+
+  .chipper-movement input {
+    flex: 1;
+  }
+
+  .chipper-reps input {
+    text-align: center;
+  }
+
+  .chipper-category select {
+    width: 100%;
+  }
+
+  .chipper-finisher {
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .chipper-finisher h4 {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+
+  .chipper-finisher p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .finisher-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
+    gap: 1rem;
+  }
+
+  .finisher-grid label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .finisher-name input,
+  .finisher-category select,
+  #finisher-notes {
+    width: 100%;
+  }
+
+  .finisher-notes-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
   }
 
   .exercise-item {
@@ -846,6 +1176,36 @@
     backdrop-filter: blur(4px);
     padding: clamp(1.5rem, 4vw, 3rem);
     z-index: 10;
+  }
+
+  @media (max-width: 720px) {
+    .chipper-grid {
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+    }
+
+    .chipper-grid-header {
+      display: none;
+    }
+
+    .chipper-movement {
+      justify-content: flex-start;
+    }
+
+    .chipper-index {
+      width: 28px;
+      height: 28px;
+      font-size: 0.8rem;
+    }
+
+    .remove-btn {
+      justify-self: flex-start;
+      padding-left: 0;
+    }
+
+    .finisher-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .modal-content {

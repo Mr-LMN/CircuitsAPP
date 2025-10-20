@@ -19,6 +19,54 @@ import { user } from '$lib/store';
 
 export let data;
 const { session, workout } = data;
+const isChipperMode = workout.mode === 'Chipper';
+
+function buildChipperGroups(steps = []) {
+        if (!Array.isArray(steps)) return [];
+        const buckets = [];
+        const lookup = Object.create(null);
+
+        steps.forEach((step, index) => {
+                const repsValue = Number(step?.reps);
+                const numericReps = Number.isFinite(repsValue) && repsValue > 0 ? Math.round(repsValue) : null;
+                const keyLabel = numericReps !== null ? `reps-${numericReps}` : 'other';
+
+                if (!lookup[keyLabel]) {
+                        lookup[keyLabel] = {
+                                reps: numericReps ?? 'Other',
+                                items: []
+                        };
+                        buckets.push(lookup[keyLabel]);
+                }
+
+                lookup[keyLabel].items.push({
+                        name: step?.name ?? '',
+                        category: step?.category ?? '',
+                        order: index + 1
+                });
+        });
+
+        return buckets
+                .sort((a, b) => {
+                        const isNumA = typeof a.reps === 'number';
+                        const isNumB = typeof b.reps === 'number';
+                        if (isNumA && isNumB) return b.reps - a.reps;
+                        if (isNumA) return -1;
+                        if (isNumB) return 1;
+                        return String(a.reps).localeCompare(String(b.reps));
+                })
+                .map((bucket) => ({
+                        reps: bucket.reps,
+                        items: bucket.items.map((item) => ({
+                                ...item,
+                                name: item.name || 'Movement'
+                        }))
+                }));
+}
+
+let chipperGroups = [];
+let chipperFinisher = null;
+let chipperSteps = [];
 
 let liveState = { phase: 'Connecting...', remaining: 0, currentStation: 0, isComplete: false, movesCompleted: 0 };
 
@@ -751,6 +799,9 @@ $: nextStationCategory = nextStationData
         : '';
 $: intervalDuration = liveState?.duration || liveState?.timing?.work || session?.timing?.work || null;
 $: hasPendingForCurrent = myCurrentStationIndex >= 0 && pendingStations.has(myCurrentStationIndex);
+$: chipperSteps = isChipperMode ? workout.chipper?.steps ?? [] : [];
+$: chipperGroups = isChipperMode ? buildChipperGroups(chipperSteps) : [];
+$: chipperFinisher = isChipperMode ? workout.chipper?.finisher ?? null : null;
 
 $: currentP1Task = myStationData?.p1?.task ? String(myStationData.p1.task).trim() : '';
 $: currentP2Task = myStationData?.p2?.task ? String(myStationData.p2.task).trim() : '';
@@ -880,6 +931,48 @@ function formatTime(s) {
                 {/if}
         </header>
 
+        {#if isChipperMode}
+                <section class="chipper-overview" aria-labelledby="chipper-title">
+                        <div class="chipper-header">
+                                <h2 id="chipper-title">Chipper flow</h2>
+                                <p>Work from the top of the pyramid down, then hit the finisher for max calories.</p>
+                        </div>
+
+                        {#if chipperGroups.length}
+                                <div class="chipper-pyramid">
+                                        {#each chipperGroups as group, groupIndex}
+                                                <div class="chipper-tier" data-group={groupIndex}>
+                                                        <div class="tier-reps">{typeof group.reps === 'number' ? `${group.reps}` : group.reps}</div>
+                                                        <ul class="tier-movements">
+                                                                {#each group.items as item}
+                                                                        <li>
+                                                                                <span class="tier-order">#{item.order}</span>
+                                                                                <span class="tier-name">{item.name}</span>
+                                                                                {#if item.category}
+                                                                                        <span class="tier-category">{item.category}</span>
+                                                                                {/if}
+                                                                        </li>
+                                                                {/each}
+                                                        </ul>
+                                                </div>
+                                        {/each}
+                                </div>
+                        {:else}
+                                <p class="chipper-empty">No chipper movements configured yet.</p>
+                        {/if}
+
+                        {#if chipperFinisher?.name}
+                                <div class="chipper-finisher-card">
+                                        <span class="finisher-label">Finisher</span>
+                                        <div class="finisher-details">
+                                                <strong>{chipperFinisher.name}</strong>
+                                                <span>{chipperFinisher.description || 'Max calories until the clock hits zero.'}</span>
+                                        </div>
+                                </div>
+                        {/if}
+                </section>
+        {/if}
+
         {#if workout.mode === 'Partner' && showPairingControls}
                 <section class="pairing-controls" aria-live="polite">
                         <div class="pairing-copy">
@@ -947,7 +1040,11 @@ function formatTime(s) {
                                                 <span class="score-eyebrow">Log your score</span>
                                                 <h2>{myActiveTaskLabel || myStationData.name}</h2>
                                                 <p class="score-subtitle">
-                                                        Station {myCurrentStationIndex + 1} · {myStationData.name}
+                                                        {#if isChipperMode}
+                                                                Finisher · {myStationData.name}
+                                                        {:else}
+                                                                Station {myCurrentStationIndex + 1} · {myStationData.name}
+                                                        {/if}
                                                 </p>
                                         </div>
                                         <div class="score-meta">
@@ -962,7 +1059,11 @@ function formatTime(s) {
                                 </header>
 
                                 <p class="score-helper">
-                                        Record the effort you hit for this interval. We'll add it to your running total automatically.
+                                        {#if isChipperMode}
+                                                Log the calories you rack up once you reach the finisher. Add a new entry each time you hop back on the machine.
+                                        {:else}
+                                                Record the effort you hit for this interval. We'll add it to your running total automatically.
+                                        {/if}
                                 </p>
 
                                 <div class="input-grid" class:two-column={metricCategory === 'Resistance' || metricCategory === 'Cardio Machine'}>
@@ -1080,7 +1181,11 @@ function formatTime(s) {
                                         <span class="station-eyebrow">Now</span>
                                         <h2>{myStationData.name}</h2>
                                         <p class="station-meta">
-                                                Station {myCurrentStationIndex + 1}
+                                                {#if isChipperMode}
+                                                        Finisher
+                                                {:else}
+                                                        Station {myCurrentStationIndex + 1}
+                                                {/if}
                                                 {#if stationCategory}
                                                         <span aria-hidden="true">·</span>
                                                         {stationCategory}
@@ -1370,6 +1475,135 @@ function formatTime(s) {
         margin: -0.35rem 0 0;
         color: var(--text-muted);
         font-size: 0.8rem;
+}
+
+.chipper-overview {
+        background: var(--surface-1);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        text-align: left;
+}
+
+.chipper-header h2 {
+        margin: 0;
+        font-size: 1.4rem;
+        color: var(--text-secondary);
+}
+
+.chipper-header p {
+        margin: 0.35rem 0 0;
+        color: var(--text-muted);
+}
+
+.chipper-pyramid {
+        display: grid;
+        gap: 1rem;
+}
+
+.chipper-tier {
+        display: grid;
+        grid-template-columns: 80px 1fr;
+        gap: 1rem;
+        align-items: start;
+}
+
+.tier-reps {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 68px;
+        height: 68px;
+        border-radius: 14px;
+        background: var(--surface-2, rgba(255, 255, 255, 0.04));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        font-family: var(--font-display);
+        font-size: 1.4rem;
+        color: var(--brand-yellow);
+}
+
+.tier-movements {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.45rem;
+}
+
+.tier-movements li {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-primary);
+        font-size: 0.95rem;
+}
+
+.tier-order {
+        font-weight: 600;
+        color: var(--text-muted);
+}
+
+.tier-category {
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+        padding: 0.1rem 0.6rem;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+}
+
+.chipper-empty {
+        margin: 0;
+        color: var(--text-muted);
+        font-style: italic;
+}
+
+.chipper-finisher-card {
+        display: grid;
+        grid-template-columns: 90px 1fr;
+        gap: 1rem;
+        align-items: start;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.finisher-label {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+}
+
+.finisher-details {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        color: var(--text-muted);
+}
+
+.finisher-details strong {
+        color: var(--text-secondary);
+        font-size: 1rem;
+}
+
+@media (max-width: 720px) {
+        .chipper-tier {
+                grid-template-columns: 1fr;
+        }
+
+        .tier-reps {
+                width: 54px;
+                height: 54px;
+                font-size: 1.1rem;
+        }
+
+        .chipper-finisher-card {
+                grid-template-columns: 1fr;
+        }
 }
 
 .pairing-summary {
