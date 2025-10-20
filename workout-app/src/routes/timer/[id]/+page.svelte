@@ -3,10 +3,19 @@
 import { onDestroy, onMount } from 'svelte';
 import { db } from '$lib/firebase';
 import { normaliseStationAssignments, serialiseStationAssignments } from '$lib/stationAssignments';
+import { buildChipperGroups } from '$lib/chipper';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 
 export let data;
 const { workout, sessionId } = data;
+const isPartnerMode = workout.mode === 'Partner';
+const isChipperMode = workout.mode === 'Chipper';
+let chipperSteps = isChipperMode ? workout.chipper?.steps ?? [] : [];
+let chipperGroups = isChipperMode ? buildChipperGroups(chipperSteps) : [];
+let chipperFinisher = isChipperMode ? workout.chipper?.finisher ?? null : null;
+$: chipperSteps = isChipperMode ? workout.chipper?.steps ?? [] : [];
+$: chipperGroups = isChipperMode ? buildChipperGroups(chipperSteps) : [];
+$: chipperFinisher = isChipperMode ? workout.chipper?.finisher ?? null : null;
 const urlOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
 const sessionRef = sessionId ? doc(db, 'sessions', sessionId) : null;
@@ -217,6 +226,37 @@ function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; st
 
 function openSetup() { pauseTimer(); isSetupVisible = true; }
 function closeSetup() { commitAllAssignments(); isSetupVisible = false; broadcastLiveState(true); }
+function closeQr() { showQr = false; }
+/**
+ * @param {MouseEvent | KeyboardEvent} event
+ */
+function shouldDismissModal(event) {
+        const type = event?.type;
+        if (type === 'click') {
+                return true;
+        }
+        if (type === 'keydown') {
+                const key = event.key;
+                return key === 'Escape' || key === 'Enter' || key === ' ' || key === 'Spacebar';
+        }
+        return false;
+}
+/**
+ * @param {MouseEvent | KeyboardEvent} event
+ */
+function handleSetupOverlayInteraction(event) {
+        if (!shouldDismissModal(event)) return;
+        event.preventDefault?.();
+        closeSetup();
+}
+/**
+ * @param {MouseEvent | KeyboardEvent} event
+ */
+function handleQrOverlayInteraction(event) {
+        if (!shouldDismissModal(event)) return;
+        event.preventDefault?.();
+        closeQr();
+}
 function formatTime(s) { const secs = Math.max(0, Math.ceil(s)); return (String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0')); }
 
 // NEW: Functions for new control buttons
@@ -296,7 +336,7 @@ console.error('Failed to initialise live state', error);
 </svelte:head>
 
 {#if isSetupVisible}
-<div class="modal-overlay" on:click|self={closeSetup}>
+<div class="modal-overlay" role="button" tabindex="0" aria-label="Close setup" on:click|self={handleSetupOverlayInteraction} on:keydown|self={handleSetupOverlayInteraction}>
 <div class="modal-content setup-modal">
 <header class="modal-header">
 <div>
@@ -334,9 +374,9 @@ console.error('Failed to initialise live state', error);
 </div>
 {/if}
 {#if showQr && sessionId}
-<div class="modal-overlay" on:click|self={() => showQr = false}>
+<div class="modal-overlay" role="button" tabindex="0" aria-label="Close QR code" on:click|self={handleQrOverlayInteraction} on:keydown|self={handleQrOverlayInteraction}>
 <div class="modal-content qr-modal">
-<button class="modal-close" type="button" aria-label="Close QR code" on:click={() => showQr = false}>&times;</button>
+<button class="modal-close" type="button" aria-label="Close QR code" on:click={closeQr}>&times;</button>
 <h2>Scan to Join Live Session</h2>
 <p>Members can scan this with their phone to join.</p>
 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`${urlOrigin}/join/${sessionId}`)}`} alt="QR Code to join session" />
@@ -365,26 +405,93 @@ console.error('Failed to initialise live state', error);
 </header>
 <main class="main-content">
 <div class="left-panel">
-<div class="station-grid">
-{#each workout.exercises as station, i (station.id ?? i)}
-<article class="station-card" class:current={i === state.currentStation}>
-<header class="station-card__header">
-<span class="station-number">{i + 1}</span><h3>{station.name}</h3>
-</header>
-<div class="station-card__tasks">
-<div class="task-line"><span class="task-label p1">P1</span><span class="task-text">{station.p1?.task || station.p1_task || station.name}</span></div>
-{#if station.p2?.task || station.p2_task}<div class="task-line"><span class="task-label p2">P2</span><span class="task-text">{station.p2?.task || station.p2_task}</span></div>{/if}
-</div>
-<footer class="station-card__roster">
-<div class="roster-chips">
-{#if stationRoster[i]?.length}
-{#each stationRoster[i] as code, codeIndex (`${code}-${codeIndex}`)}<span>{code}</span>{/each}
-{:else}<span class="roster-empty">OPEN</span>{/if}
-</div>
-</footer>
-</article>
-{/each}
-</div>
+  {#if isChipperMode}
+    <section class="chipper-overview" aria-labelledby="chipper-flow-title">
+      <div class="chipper-header">
+        <h2 id="chipper-flow-title">Chipper flow</h2>
+        <p>Work from the top of the pyramid down, then finish on the machine for max calories.</p>
+      </div>
+
+      {#if chipperGroups.length}
+        <div class="chipper-pyramid">
+          {#each chipperGroups as group, groupIndex}
+            <div class="chipper-tier" data-group={groupIndex}>
+              <div class="tier-reps">{typeof group.reps === 'number' ? `${group.reps}` : group.reps}</div>
+              <ul class="tier-movements">
+                {#each group.items as item}
+                  <li>
+                    <span class="tier-order">#{item.order}</span>
+                    <span class="tier-name">{item.name}</span>
+                    {#if item.category}<span class="tier-category">{item.category}</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="chipper-empty">No chipper movements configured yet.</p>
+      {/if}
+
+      {#if chipperFinisher?.name}
+        <div class="chipper-finisher-card">
+          <span class="finisher-label">Finisher</span>
+          <div class="finisher-details">
+            <strong>{chipperFinisher.name}</strong>
+            <span>{chipperFinisher.description || 'Max calories until the clock hits zero.'}</span>
+          </div>
+        </div>
+      {/if}
+    </section>
+  {/if}
+
+  <div class="station-grid" class:solo={!isPartnerMode}>
+    {#each workout.exercises as station, i (station.id ?? i)}
+      <article class="station-card" class:current={i === state.currentStation}>
+        <header class="station-card__header">
+          <span class="station-number">{i + 1}</span>
+          <h3>{station.name}</h3>
+        </header>
+        <div class="station-card__tasks">
+          {#if isPartnerMode}
+            <div class="task-line">
+              <span class="task-label p1">P1</span>
+              <span class="task-text">{station.p1?.task || station.p1_task || station.name}</span>
+            </div>
+            {#if station.p2?.task || station.p2_task}
+              <div class="task-line">
+                <span class="task-label p2">P2</span>
+                <span class="task-text">{station.p2?.task || station.p2_task}</span>
+              </div>
+            {/if}
+          {:else}
+            {#if station.description}
+              <p class="task-description">{station.description}</p>
+            {:else}
+              <p class="task-description">{station.name}</p>
+            {/if}
+            {#if station.category || station.metric}
+              <div class="task-meta">
+                {#if station.category}<span class="task-chip">{station.category}</span>{/if}
+                {#if station.metric}<span class="task-chip subtle">{station.metric}</span>{/if}
+              </div>
+            {/if}
+          {/if}
+        </div>
+        <footer class="station-card__roster">
+          <div class="roster-chips">
+            {#if stationRoster[i]?.length}
+              {#each stationRoster[i] as code, codeIndex (`${code}-${codeIndex}`)}
+                <span>{code}</span>
+              {/each}
+            {:else}
+              <span class="roster-empty">OPEN</span>
+            {/if}
+          </div>
+        </footer>
+      </article>
+    {/each}
+  </div>
 </div>
 <div class="right-panel">
 <main class="timer-main">
@@ -461,6 +568,7 @@ console.error('Failed to initialise live state', error);
 /* Left Panel */
 .left-panel { background: var(--bg-panel); border-radius: 1rem; border: 1px solid var(--border-color); padding: clamp(1rem, 2vw, 1.5rem); overflow-y: auto; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
 .station-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.station-grid.solo { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .station-card { background: radial-gradient(circle at top left, rgba(148, 163, 184, 0.1), transparent 70%); border: 1px solid var(--border-color); border-radius: 16px; padding: clamp(0.9rem, 1.2vw, 1.2rem); display: flex; flex-direction: column; gap: 0.75rem; transition: all 200ms ease; position: relative; overflow: hidden; min-height: 100%; }
 .station-card::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
 .station-card.current { border-color: rgba(253, 224, 71, 0.8); box-shadow: 0 0 30px rgba(253, 224, 71, 0.25); transform: translateY(-4px); }
@@ -469,13 +577,35 @@ console.error('Failed to initialise live state', error);
 .station-card.current .station-number { background: var(--brand-yellow); color: var(--bg-main); }
 .station-card h3 { margin: 0; font-size: 1.05rem; font-weight: 600; letter-spacing: 0.02em; }
 .station-card__tasks { display: flex; flex-direction: column; gap: 0.35rem; }
+.station-grid.solo .station-card__tasks { gap: 0.75rem; }
 .task-line { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--text-secondary); }
 .task-label { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.1em; }
 .task-text { color: var(--text-secondary); }
+.task-description { margin: 0; color: var(--text-secondary); line-height: 1.45; font-size: 0.9rem; }
+.task-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.task-chip { background: rgba(59, 130, 246, 0.18); color: #bfdbfe; padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.task-chip.subtle { background: rgba(148, 163, 184, 0.18); color: #e2e8f0; }
 .station-card__roster { margin-top: auto; padding-top: 0.5rem; border-top: 1px solid var(--border-color); }
 .roster-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .roster-chips span { padding: 0.2rem 0.5rem; border-radius: 6px; background: rgba(99, 102, 241, 0.18); color: #c7d2fe; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; }
 .roster-empty { color: var(--text-muted); font-size: 0.75rem; }
+
+.chipper-overview { display: flex; flex-direction: column; gap: 1.25rem; margin-bottom: 1.5rem; }
+.chipper-header h2 { margin: 0; font-family: var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--brand-yellow); font-size: 1.4rem; }
+.chipper-header p { margin: 0; color: var(--text-secondary); font-size: 0.9rem; }
+.chipper-pyramid { display: flex; flex-direction: column; gap: 0.9rem; }
+.chipper-tier { border: 1px solid var(--border-color); border-radius: 12px; padding: 0.9rem 1rem; background: rgba(15, 23, 42, 0.55); display: grid; grid-template-columns: 80px 1fr; gap: 1rem; align-items: start; }
+.tier-reps { font-family: var(--font-display); font-size: 1.6rem; color: var(--brand-yellow); text-align: center; align-self: center; }
+.tier-movements { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.tier-movements li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; color: var(--text-secondary); font-size: 0.95rem; }
+.tier-order { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
+.tier-name { font-weight: 600; }
+.tier-category { font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); }
+.chipper-empty { margin: 0; color: var(--text-muted); font-size: 0.9rem; font-style: italic; }
+.chipper-finisher-card { border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem 1.2rem; background: rgba(30, 64, 175, 0.35); display: flex; flex-direction: column; gap: 0.4rem; }
+.finisher-label { font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); }
+.finisher-details strong { font-size: 1.1rem; display: block; color: var(--text-primary); }
+.finisher-details span { color: var(--text-secondary); font-size: 0.9rem; }
 
 /* Right Panel */
 .right-panel { background: radial-gradient(circle at top right, rgba(96, 165, 250, 0.15), rgba(15, 23, 42, 0.6)); border-radius: 1.25rem; border: 1px solid var(--border-color); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: clamp(2rem, 4vw, 3rem) clamp(1.5rem, 3vw, 2.5rem); box-shadow: 0 30px 60px -30px rgba(37, 99, 235, 0.6); position: relative; overflow: hidden; }
