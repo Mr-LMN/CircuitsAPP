@@ -85,8 +85,51 @@
 
 	function startWorkout(id) {
 		// We'll build the live timer view in a future step
-		goto(resolve(`/timer/${id}`));
-	}
+                goto(resolve(`/timer/${id}`));
+        }
+
+function groupChipperMovements(steps = []) {
+                if (!Array.isArray(steps)) return [];
+                const buckets = [];
+                const lookup = Object.create(null);
+
+                steps.forEach((step, index) => {
+                        const repsValue = Number(step?.reps);
+                        const numericReps = Number.isFinite(repsValue) && repsValue > 0 ? Math.round(repsValue) : null;
+                        const keyLabel = numericReps !== null ? `reps-${numericReps}` : 'other';
+
+                        if (!lookup[keyLabel]) {
+                                lookup[keyLabel] = {
+                                        reps: numericReps ?? 'Other',
+                                        items: []
+                                };
+                                buckets.push(lookup[keyLabel]);
+                        }
+
+                        lookup[keyLabel].items.push({
+                                name: step?.name ?? '',
+                                category: step?.category ?? '',
+                                order: index + 1
+                        });
+                });
+
+                return buckets
+                        .sort((a, b) => {
+                                const isNumA = typeof a.reps === 'number';
+                                const isNumB = typeof b.reps === 'number';
+                                if (isNumA && isNumB) return b.reps - a.reps;
+                                if (isNumA) return -1;
+                                if (isNumB) return 1;
+                                return String(a.reps).localeCompare(String(b.reps));
+                        })
+                        .map((bucket) => ({
+                                reps: bucket.reps,
+                                items: bucket.items.map((item) => ({
+                                        ...item,
+                                        name: item.name || 'Movement'
+                                }))
+                        }));
+}
 </script>
 
 <div class="page-container">
@@ -117,8 +160,8 @@
                                         <div class="exercise-list">
                                                 <strong>Exercises:</strong>
                                                 <ul>
-                                                        {#each workout.exercises as exercise, j (`${workout.id}-${j}`)}
-                                                                {#if workout.mode === 'Partner'}
+                                                        {#if workout.mode === 'Partner'}
+                                                                {#each workout.exercises as exercise, j (`${workout.id}-${j}`)}
                                                                         <li class="partner-station">
                                                                                 <div class="station-title-row">
                                                                                         <span class="station-name">{exercise.name}</span>
@@ -137,15 +180,49 @@
                                                                                         </div>
                                                                                 {/if}
                                                                         </li>
+                                                                {/each}
+                                                        {:else if workout.mode === 'Chipper'}
+                                                                {#if workout.chipper?.steps?.length}
+                                                                        {#each groupChipperMovements(workout.chipper.steps) as group, gIdx (`${workout.id}-group-${gIdx}`)}
+                                                                                <li class="chipper-preview-row">
+                                                                                        <span class="chipper-preview-reps">{typeof group.reps === 'number' ? `${group.reps}` : group.reps}</span>
+                                                                                        <div class="chipper-preview-moves">
+                                                                                                {#each group.items as item}
+                                                                                                        <div class="chipper-preview-move">
+                                                                                                                <span class="chipper-preview-order">#{item.order}</span>
+                                                                                                                <span class="chipper-preview-name">{item.name}</span>
+                                                                                                                {#if item.category}
+                                                                                                                        <span class="chipper-preview-category">{item.category}</span>
+                                                                                                                {/if}
+                                                                                                        </div>
+                                                                                                {/each}
+                                                                                        </div>
+                                                                                </li>
+                                                                        {/each}
                                                                 {:else}
+                                                                        <li class="empty-state-row">No chipper movements added yet.</li>
+                                                                {/if}
+                                                                {#if workout.chipper?.finisher?.name}
+                                                                        <li class="chipper-preview-finisher">
+                                                                                <span class="label">Finisher</span>
+                                                                                <div class="finisher-copy">
+                                                                                        <strong>{workout.chipper.finisher.name}</strong>
+                                                                                        {#if workout.chipper.finisher.description}
+                                                                                                <span>{workout.chipper.finisher.description}</span>
+                                                                                        {/if}
+                                                                                </div>
+                                                                        </li>
+                                                                {/if}
+                                                        {:else}
+                                                                {#each workout.exercises as exercise, j (`${workout.id}-${j}`)}
                                                                         <li>
                                                                                 <span class="exercise-name">{exercise.name}</span>
                                                                                 {#if exercise.description}
                                                                                         <span class="exercise-description"> – {exercise.description}</span>
                                                                                 {/if}
                                                                         </li>
-                                                                {/if}
-                                                        {/each}
+                                                                {/each}
+                                                        {/if}
                                                 </ul>
                                         </div>
 					<div class="card-actions">
@@ -183,6 +260,7 @@ flex-direction: column; /* Ensures content flows top-to-bottom */
 .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-right: 0.5rem; text-transform: uppercase; }
 .badge.circuit { background-color: #059669; color: white; }
 .badge.partner { background-color: #DB2777; color: white; }
+.badge.chipper { background-color: #7c3aed; color: white; }
 .badge.benchmark { background-color: var(--brand-yellow); color: var(--bg-main); }
 
 .notes {
@@ -194,14 +272,115 @@ flex-grow: 0; /* FIX: This prevents the notes from pushing exercises to the bott
 }
 
 .exercise-list {
-margin-top: auto; /* Pushes this section to the bottom if there's space */
-padding-top: 1rem;
-border-top: 1px solid var(--border-color);
+        margin-top: auto;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color);
 }
 .exercise-list strong { font-size: 0.9rem; color: var(--text-secondary); }
 .exercise-list ul { list-style: none; padding: 0; margin-top: 0.5rem; font-size: 0.85rem; }
-.exercise-list li { margin-bottom: 0.3rem; } /* Tighter spacing */
+.exercise-list li { margin-bottom: 0.3rem; }
 .exercise-list li span { color: var(--text-muted); margin-left: 0.5rem; }
+
+.chipper-preview-row {
+        display: grid;
+        grid-template-columns: 72px 1fr;
+        gap: 0.75rem;
+        align-items: flex-start;
+        padding: 0.5rem 0;
+        border-bottom: 1px dashed var(--border-color);
+}
+
+.chipper-preview-row:last-child { border-bottom: none; }
+
+.chipper-preview-reps {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 60px;
+        height: 60px;
+        border-radius: 12px;
+        background: var(--surface-2, rgba(255, 255, 255, 0.05));
+        font-family: var(--font-display);
+        font-size: 1.35rem;
+        color: var(--brand-yellow);
+}
+
+.chipper-preview-moves {
+        display: grid;
+        gap: 0.5rem;
+}
+
+.chipper-preview-move {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.9rem;
+        color: var(--text-primary);
+}
+
+.chipper-preview-order {
+        font-weight: 600;
+        color: var(--text-muted);
+}
+
+.chipper-preview-category {
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 999px;
+        padding: 0.1rem 0.5rem;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+}
+
+.chipper-preview-finisher {
+        display: grid;
+        grid-template-columns: 80px 1fr;
+        gap: 0.75rem;
+        padding-top: 0.75rem;
+        margin-top: 0.75rem;
+        border-top: 1px solid var(--border-color);
+}
+
+.chipper-preview-finisher .label {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+}
+
+.finisher-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        color: var(--text-muted);
+}
+
+.finisher-copy strong {
+        color: var(--text-secondary);
+        font-size: 0.95rem;
+}
+
+.empty-state-row {
+        color: var(--text-muted);
+        font-style: italic;
+        padding: 0.5rem 0;
+}
+
+@media (max-width: 600px) {
+        .chipper-preview-row {
+                grid-template-columns: 1fr;
+        }
+
+        .chipper-preview-reps {
+                width: 48px;
+                height: 48px;
+                font-size: 1.1rem;
+        }
+
+        .chipper-preview-finisher {
+                grid-template-columns: 1fr;
+        }
+}
 
 .card-actions { margin-top: 1.5rem; display: flex; gap: 0.5rem; justify-content: flex-end; }
 .action-btn { border: none; border-radius: 8px; padding: 0.5rem 1rem; cursor: pointer; font-weight: 600; }
