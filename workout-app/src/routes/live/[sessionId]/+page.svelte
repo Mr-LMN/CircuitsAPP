@@ -46,6 +46,7 @@ let currentP1Task = '';
 let currentP2Task = '';
 let soloPrimaryTask = '';
 let soloSecondaryTask = '';
+const DEFAULT_CATEGORY = 'Bodyweight';
 let stationCategory = DEFAULT_CATEGORY;
 let primaryTaskDetails = { name: '', category: DEFAULT_CATEGORY };
 let secondaryTaskDetails = { name: '', category: DEFAULT_CATEGORY };
@@ -65,7 +66,6 @@ let unsubscribe = [];
 
 const createEntryScore = () => ({ reps: '', weight: '', cals: '', dist: '', notes: '' });
 const createCumulativeScore = () => ({ reps: 0, weight: 0, cals: 0, dist: '', notes: '' });
-const DEFAULT_CATEGORY = 'Bodyweight';
 
 function normaliseCategory(category, fallback = '') {
         const raw = String(category ?? '').trim();
