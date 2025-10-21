@@ -118,6 +118,16 @@ let cumulativeScores = workout.exercises.map((ex) => ({
 
 let pendingStations = new Set();
 
+const createFinisherEntryState = () => ({ cals: '', notes: '' });
+let chipperFinisherEntry = createFinisherEntryState();
+let chipperFinisherTotals = createCumulativeScore();
+let chipperSaveStatus = 'idle';
+let chipperSaveMessage = '';
+let showChipperFinisherLogger = false;
+let chipperFinisherName = '';
+let chipperFinisherCategory = DEFAULT_CATEGORY;
+let hasChipperResult = false;
+
 let lastSavedStationIndex = -1;
 let lastSaveMessage = '';
 let lastSaveType = 'idle';
@@ -196,6 +206,73 @@ function hasEntryValue(entry) {
                 (entry.dist && entry.dist.trim().length > 0) ||
                 (entry.notes && entry.notes.trim().length > 0)
         );
+}
+
+function handleChipperFinisherInput(field, rawValue) {
+        const entry = { ...chipperFinisherEntry };
+
+        if (field === 'notes') {
+                entry.notes = rawValue;
+        } else if (field === 'cals') {
+                const numeric = Number(rawValue);
+                entry.cals = rawValue === '' ? '' : Math.max(0, Number.isFinite(numeric) ? numeric : 0);
+        }
+
+        chipperFinisherEntry = entry;
+
+        if (chipperSaveStatus !== 'idle') {
+                chipperSaveStatus = 'idle';
+                chipperSaveMessage = '';
+        }
+}
+
+function saveChipperFinisher() {
+        const caloriesValue = Number(chipperFinisherEntry.cals);
+        const hasCalories = Number.isFinite(caloriesValue) && caloriesValue > 0;
+        const notes = chipperFinisherEntry.notes ? chipperFinisherEntry.notes.trim() : '';
+
+        if (!hasCalories && !notes) {
+                chipperSaveStatus = 'info';
+                chipperSaveMessage = 'Add calories or notes before saving.';
+                return;
+        }
+
+        const totals = createCumulativeScore();
+        if (hasCalories) {
+                totals.cals = caloriesValue;
+        }
+        if (notes) {
+                totals.notes = notes;
+        }
+
+        chipperFinisherTotals = totals;
+
+        const record = {
+                stationName: chipperFinisherName || 'Chipper Finisher',
+                category: chipperFinisherCategory,
+                score: totals
+        };
+
+        const existingIndex = cumulativeScores.findIndex(
+                (item) => (item.stationName || '') === record.stationName
+        );
+
+        if (existingIndex === -1) {
+                cumulativeScores = [...cumulativeScores, record];
+        } else {
+                const updated = [...cumulativeScores];
+                updated[existingIndex] = record;
+                cumulativeScores = updated;
+        }
+
+        chipperFinisherEntry = {
+                ...chipperFinisherEntry,
+                cals: hasCalories ? String(caloriesValue) : '',
+                notes
+        };
+
+        chipperSaveStatus = 'success';
+        chipperSaveMessage = 'Finisher result saved.';
 }
 
 function handleEntryChange(index, field, rawValue) {
@@ -760,6 +837,18 @@ $: hasPendingForCurrent = myCurrentStationIndex >= 0 && pendingStations.has(myCu
 $: chipperSteps = isChipperMode ? workout.chipper?.steps ?? [] : [];
 $: chipperGroups = isChipperMode ? buildChipperGroups(chipperSteps) : [];
 $: chipperFinisher = isChipperMode ? workout.chipper?.finisher ?? null : null;
+$: chipperFinisherName =
+        chipperFinisher?.name && chipperFinisher.name.trim()
+                ? chipperFinisher.name.trim()
+                : 'Chipper Finisher';
+$: chipperFinisherCategory = normaliseCategory(
+        chipperFinisher?.category,
+        'Cardio Machine'
+);
+$: showChipperFinisherLogger = Boolean(isChipperMode && chipperFinisher && myCurrentStationIndex === -1);
+$: hasChipperResult =
+        Number(chipperFinisherTotals?.cals ?? 0) > 0 ||
+        Boolean(chipperFinisherTotals?.notes && chipperFinisherTotals.notes.trim());
 
 $: currentP1Task = myStationData?.p1?.task ? String(myStationData.p1.task).trim() : '';
 $: currentP2Task = myStationData?.p2?.task ? String(myStationData.p2.task).trim() : '';
@@ -1234,11 +1323,89 @@ function formatTime(s) {
                                                         {rosterStatus === 'joining' ? 'Joining...' : 'Join rotation'}
                                                 </button>
                                         {/if}
+                                {:else if liveState.isComplete}
+                                        <h2>Session finished</h2>
+                                        <p>Nice work! Log your finisher result below to wrap things up.</p>
+                                {:else if hasSessionStarted}
+                                        <h2>Workout underway</h2>
+                                        <p>The workout has started. We'll assign you to a station as soon as one opens up.</p>
                                 {:else}
                                         <h2>Connecting to Session...</h2>
                                         <p>Waiting for the admin to start the workout and assign you to a station.</p>
                                 {/if}
                         </div>
+
+                        {#if showChipperFinisherLogger}
+                                <div class="score-card">
+                                        <header class="score-header">
+                                                <div class="score-title">
+                                                        <span class="score-eyebrow">Log your result</span>
+                                                        <h2>{chipperFinisherName}</h2>
+                                                        <p class="score-subtitle">
+                                                                Finisher · {chipperFinisher?.description || 'Max calories until the clock hits zero.'}
+                                                        </p>
+                                                </div>
+                                                <div class="score-meta">
+                                                        <span class="score-chip emphasis">Calories</span>
+                                                        {#if chipperFinisherCategory}
+                                                                <span class="score-chip subtle">{chipperFinisherCategory}</span>
+                                                        {/if}
+                                                        <span class="score-chip">Finisher</span>
+                                                </div>
+                                        </header>
+
+                                        <p class="score-helper">
+                                                Record the max calories you finish with once the timer ends. We'll include it when you upload your workout.
+                                        </p>
+
+                                        <div class="input-grid">
+                                                <label class="input-field full">
+                                                        <span>Max calories</span>
+                                                        <input
+                                                                type="number"
+                                                                inputmode="numeric"
+                                                                min="0"
+                                                                placeholder="e.g. 85"
+                                                                value={chipperFinisherEntry.cals}
+                                                                on:input={(event) => handleChipperFinisherInput('cals', event.target.value)}
+                                                        />
+                                                </label>
+
+                                                <label class="input-field full notes-field">
+                                                        <span>Notes (optional)</span>
+                                                        <textarea
+                                                                rows="2"
+                                                                placeholder="Add optional notes"
+                                                                on:input={(event) => handleChipperFinisherInput('notes', event.target.value)}
+                                                        >{chipperFinisherEntry.notes}</textarea>
+                                                </label>
+                                        </div>
+
+                                        <div class="actions-row">
+                                                <button class="btn btn-save" on:click={saveChipperFinisher} disabled={chipperSaveStatus === 'saving'}>
+                                                        ✓ Save result
+                                                </button>
+
+                                                {#if chipperSaveMessage}
+                                                        <p class={`save-feedback ${chipperSaveStatus}`}>{chipperSaveMessage}</p>
+                                                {/if}
+                                        </div>
+
+                                        {#if hasChipperResult}
+                                                <div class="totals">
+                                                        <h3>Result logged</h3>
+                                                        <ul>
+                                                                {#if Number(chipperFinisherTotals.cals) > 0}
+                                                                        <li><span>Calories</span><span>{chipperFinisherTotals.cals}</span></li>
+                                                                {/if}
+                                                                {#if chipperFinisherTotals.notes && chipperFinisherTotals.notes.trim()}
+                                                                        <li class="notes-total"><span>Notes</span><span>{chipperFinisherTotals.notes}</span></li>
+                                                                {/if}
+                                                        </ul>
+                                                </div>
+                                        {/if}
+                                </div>
+                        {/if}
                 </main>
         {/if}
 
