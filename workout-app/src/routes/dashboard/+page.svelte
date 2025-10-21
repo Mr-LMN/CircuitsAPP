@@ -80,7 +80,7 @@
                         }
 
                         stats.sessionsAttended = attendanceSnapshot.size;
-                        const scores = scoresSnapshot.docs.map((docSnap) => docSnap.data());
+                        const scores = scoresSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
                         const personalBests = new Map();
                         for (const score of scores) {
                                 const existingBest = personalBests.get(score.workoutId);
@@ -252,15 +252,19 @@
 {#if stats.personalBests.length === 0}
 <p class="empty-state">Complete a benchmark workout to see your results here!</p>
 {:else}
-<div class="pb-grid">
-{#each stats.personalBests as pb}
-<div class="pb-card">
-<span class="pb-workout-title">{pb.workoutTitle}</span>
-<span class="pb-score">{pb.score}</span>
-<span class="pb-date">{normaliseDate(pb.date)?.toLocaleDateString() ?? ''}</span>
-</div>
-{/each}
-</div>
+            <div class="pb-grid">
+                    {#each stats.personalBests as pb (pb.id ?? pb.workoutId ?? pb.workoutTitle)}
+                            <a
+                                    class="pb-card"
+                                    href={`/dashboard/personal-bests/${pb.id}`}
+                                    aria-label={`View personal best details for ${pb.workoutTitle}`}
+                            >
+                                    <span class="pb-workout-title">{pb.workoutTitle}</span>
+                                    <span class="pb-score">{pb.score}</span>
+                                    <span class="pb-date">{normaliseDate(pb.date)?.toLocaleDateString() ?? ''}</span>
+                            </a>
+                    {/each}
+            </div>
 {/if}
 </section>
 </div>
@@ -300,7 +304,26 @@
 .stat-value { font-family: var(--font-display); font-size: 3rem; color: var(--brand-yellow); }
 .stat-label { font-size: 0.9rem; color: var(--text-muted); }
 .pb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.pb-card { background: var(--surface-2); border-radius: 12px; padding: 1rem; }
+.pb-card {
+        display: block;
+        background: var(--surface-2);
+        border-radius: 12px;
+        padding: 1rem;
+        text-decoration: none;
+        color: inherit;
+        border: 1px solid transparent;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.pb-card:hover,
+.pb-card:focus-visible {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+        border-color: var(--brand-yellow);
+}
+.pb-card:focus-visible {
+        outline: 2px solid var(--brand-yellow);
+        outline-offset: 2px;
+}
 .pb-workout-title { font-weight: 600; }
 .pb-score { font-family: var(--font-display); font-size: 2rem; color: var(--brand-yellow); }
 .pb-date { font-size: 0.8rem; color: var(--text-muted); }

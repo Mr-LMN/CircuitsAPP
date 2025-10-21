@@ -73,8 +73,29 @@ onMount(async () => {
                 session = {
                         id: sessionSnap.id,
                         ...sessionData,
-                        attendance: sessionData.attendance ?? []
+                        attendance: []
                 };
+
+                const [attendanceSnapshot, scoresSnapshot, subcollectionFeedbackSnapshot, fallbackFeedbackSnapshot] = await Promise.all([
+                        getDocs(query(collection(db, 'attendance'), where('sessionId', '==', sessionId))),
+                        getDocs(query(collection(db, 'scores'), where('sessionId', '==', sessionId))),
+                        getDocs(collection(db, 'sessions', sessionId, 'feedback')),
+                        getDocs(query(collection(db, 'sessionFeedback'), where('sessionId', '==', sessionId)))
+                ]);
+
+                session.attendance = attendanceSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+                scoreEntries = scoresSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+
+                const combinedFeedback = [
+                        ...subcollectionFeedbackSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })),
+                        ...fallbackFeedbackSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+                ];
+
+                feedback = combinedFeedback.sort((a, b) => {
+                        const aTime = toDate(a.createdAt)?.getTime() ?? 0;
+                        const bTime = toDate(b.createdAt)?.getTime() ?? 0;
+                        return bTime - aTime;
+                });
 
                 if (session.workoutId) {
                         const workoutSnap = await getDoc(doc(db, 'workouts', session.workoutId));
@@ -82,18 +103,6 @@ onMount(async () => {
                                 workout = { id: workoutSnap.id, ...workoutSnap.data() };
                         }
                 }
-
-                const scoresSnapshot = await getDocs(query(collection(db, 'scores'), where('sessionId', '==', sessionId)));
-                scoreEntries = scoresSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-
-                const feedbackSnapshot = await getDocs(collection(db, 'sessions', sessionId, 'feedback'));
-                feedback = feedbackSnapshot.docs
-                        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-                        .sort((a, b) => {
-                                const aTime = toDate(a.createdAt)?.getTime() ?? 0;
-                                const bTime = toDate(b.createdAt)?.getTime() ?? 0;
-                                return bTime - aTime;
-                        });
         } catch (error) {
                 console.error('Failed to load session results', error);
                 loadError = 'Unable to load session results. Please try again.';

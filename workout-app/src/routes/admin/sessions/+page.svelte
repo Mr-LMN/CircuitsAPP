@@ -36,6 +36,34 @@ const d = new Date(date);
 return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
+async function fetchAttendanceForSessions(sessionIds) {
+  const attendanceMap = new Map();
+
+  if (!sessionIds.length) {
+    return attendanceMap;
+  }
+
+  try {
+    const attendanceSnapshots = await Promise.all(
+      sessionIds.map((id) =>
+        getDocs(query(collection(db, 'attendance'), where('sessionId', '==', id)))
+      )
+    );
+
+    attendanceSnapshots.forEach((snapshot, index) => {
+      const sessionId = sessionIds[index];
+      attendanceMap.set(
+        sessionId,
+        snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+      );
+    });
+  } catch (error) {
+    console.error('Failed to fetch attendance records for sessions', error);
+  }
+
+  return attendanceMap;
+}
+
 async function watchSessions(uid) {
   unsubscribeSessions();
 
@@ -49,35 +77,53 @@ async function watchSessions(uid) {
     orderBy('sessionDate', 'desc')
   );
 
+  let sessionUpdateToken = 0;
+
   unsubscribeSessions = onSnapshot(
     sessionsQuery,
     (snapshot) => {
-      const allSessions = snapshot.docs.map((docSnap) => {
+      const baseSessions = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
         return {
           id: docSnap.id,
           ...data,
           rsvps: data.rsvps ?? [],
-          attendance: data.attendance ?? []
+          attendance: []
         };
       });
 
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
+      const sessionIds = baseSessions.map((session) => session.id);
+      const currentToken = ++sessionUpdateToken;
 
-      upcomingSessions = allSessions
-        .filter((session) => {
+      void (async () => {
+        const attendanceMap = await fetchAttendanceForSessions(sessionIds);
+
+        if (currentToken !== sessionUpdateToken) {
+          return;
+        }
+
+        const enrichedSessions = baseSessions.map((session) => ({
+          ...session,
+          attendance: attendanceMap.get(session.id) ?? []
+        }));
+
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+
+        upcomingSessions = enrichedSessions
+          .filter((session) => {
+            const date = formatDate(session.sessionDate);
+            return date && date >= startOfToday;
+          })
+          .reverse();
+
+        pastSessions = enrichedSessions.filter((session) => {
           const date = formatDate(session.sessionDate);
-          return date && date >= startOfToday;
-        })
-        .reverse();
+          return date && date < startOfToday;
+        });
 
-      pastSessions = allSessions.filter((session) => {
-        const date = formatDate(session.sessionDate);
-        return date && date < startOfToday;
-      });
-
-      isLoading = false;
+        isLoading = false;
+      })();
     },
     (error) => {
       console.error('Failed to subscribe to sessions', error);

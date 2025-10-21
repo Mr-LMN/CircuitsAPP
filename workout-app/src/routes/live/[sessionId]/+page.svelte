@@ -704,32 +704,78 @@ async function saveFinalScores() {
                 const hasRating = Number.isFinite(ratingValue) && ratingValue > 0;
                 const shouldRecordFeedback = hasRating || trimmedComment.length;
 
-                const writes = [attendanceWrite, sessionUpdate];
+                const writes = [
+                        { type: 'attendance-record', promise: attendanceWrite },
+                        { type: 'session-attendance', promise: sessionUpdate }
+                ];
 
                 if (shouldRecordFeedback) {
-                        writes.push(
-                                addDoc(collection(db, 'sessions', session.id, 'feedback'), {
-                                        rating: hasRating ? ratingValue : null,
-                                        comment: trimmedComment,
-                                        createdAt: serverTimestamp()
-                                })
-                        );
+                        const feedbackPayload = {
+                                rating: hasRating ? ratingValue : null,
+                                comment: trimmedComment,
+                                createdAt: serverTimestamp()
+                        };
+
+                        const recordFeedback = async () => {
+                                try {
+                                        await addDoc(collection(db, 'sessions', session.id, 'feedback'), feedbackPayload);
+                                } catch (primaryError) {
+                                        console.warn('Primary feedback write failed, attempting fallback collection.', primaryError);
+                                        try {
+                                                await addDoc(collection(db, 'sessionFeedback'), {
+                                                        ...feedbackPayload,
+                                                        sessionId: session.id,
+                                                        workoutId: workout.id,
+                                                        workoutTitle: workout.title,
+                                                        userId: $user.uid,
+                                                        displayName: resolvedDisplayName
+                                                });
+                                        } catch (fallbackError) {
+                                                console.error('Fallback feedback write failed:', fallbackError);
+                                                throw fallbackError;
+                                        }
+                                }
+                        };
+
+                        writes.push({ type: 'feedback', promise: recordFeedback() });
                 }
 
-                const writeResults = await Promise.allSettled(writes);
-                const failedWrites = writeResults.filter((result) => result.status === 'rejected');
+                const writeResults = await Promise.allSettled(writes.map((entry) => entry.promise));
+                const failureTypes = new Set();
 
-                failedWrites.forEach((result) => {
-                        console.error('Follow-up write failed:', result.reason);
+                writeResults.forEach((result, index) => {
+                        if (result.status === 'rejected') {
+                                const { type } = writes[index];
+                                failureTypes.add(type);
+                                if (type === 'session-attendance') {
+                                        console.warn('Session attendance array update failed:', result.reason);
+                                } else {
+                                        console.error('Follow-up write failed:', result.reason);
+                                }
+                        }
                 });
 
                 hasSavedFinalScore = true;
-                if (failedWrites.length) {
+
+                const attendanceFailed = failureTypes.has('attendance-record');
+                const sessionAttendanceFailed = failureTypes.has('session-attendance');
+                const feedbackFailed = failureTypes.has('feedback');
+
+                if (attendanceFailed) {
                         finalSaveStatus = 'warning';
-                        finalSaveMessage = 'Workout saved, but we could not update attendance automatically. Your coach will double-check it.';
+                        finalSaveMessage =
+                                'Workout saved, but we could not record your attendance. Please let your coach know so they can update it.';
+                } else if (feedbackFailed) {
+                        finalSaveStatus = 'warning';
+                        finalSaveMessage =
+                                'Workout saved, but we could not record your feedback. Please try again later or let your coach know.';
                 } else {
                         finalSaveStatus = 'success';
                         finalSaveMessage = 'Workout uploaded to your dashboard.';
+
+                        if (sessionAttendanceFailed) {
+                                console.info('Attendance fallback will rely on standalone attendance records for this session.');
+                        }
                 }
         } catch (error) {
                 console.error('Error saving score:', error);
