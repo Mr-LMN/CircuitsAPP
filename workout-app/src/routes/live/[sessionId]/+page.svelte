@@ -104,6 +104,17 @@ function formatDistance(value) {
         return trimmed;
 }
 
+function getFinisherMetricForCategory(category) {
+        const normalised = normaliseCategory(category, '');
+        if (normalised === 'Cardio Machine') {
+                return { key: 'cals', label: 'Calories', placeholder: 'e.g. 80' };
+        }
+        if (normalised === 'Bodyweight' || normalised === 'Resistance') {
+                return { key: 'reps', label: 'Reps', placeholder: 'e.g. 45' };
+        }
+        return { key: 'reps', label: 'Score', placeholder: 'Enter result' };
+}
+
 let currentEntries = workout.exercises.map((ex) => ({
         stationName: ex.name ?? '',
         category: ex.category ?? '',
@@ -117,16 +128,25 @@ let cumulativeScores = workout.exercises.map((ex) => ({
 }));
 
 let pendingStations = new Set();
-
-const createFinisherEntryState = () => ({ cals: '', notes: '' });
-let chipperFinisherEntry = createFinisherEntryState();
-let chipperFinisherTotals = createCumulativeScore();
-let chipperSaveStatus = 'idle';
-let chipperSaveMessage = '';
-let showChipperFinisherLogger = false;
 let chipperFinisherName = '';
 let chipperFinisherCategory = DEFAULT_CATEGORY;
-let hasChipperResult = false;
+
+const isAmrapType = String(workout?.type ?? '').toLowerCase() === 'amrap';
+const requiresCompletionLog = isChipperMode || isAmrapType;
+
+let showCompletionModal = false;
+let completionError = '';
+let completionForm = {
+        finisherValue: '',
+        completedChipper: false,
+        progressExercise: '',
+        progressReps: '',
+        amrapRounds: '',
+        amrapReps: ''
+};
+let completionSummaryEntry = null;
+let completionFinisherEntry = null;
+let finisherMetric = null;
 
 let lastSavedStationIndex = -1;
 let lastSaveMessage = '';
@@ -206,73 +226,6 @@ function hasEntryValue(entry) {
                 (entry.dist && entry.dist.trim().length > 0) ||
                 (entry.notes && entry.notes.trim().length > 0)
         );
-}
-
-function handleChipperFinisherInput(field, rawValue) {
-        const entry = { ...chipperFinisherEntry };
-
-        if (field === 'notes') {
-                entry.notes = rawValue;
-        } else if (field === 'cals') {
-                const numeric = Number(rawValue);
-                entry.cals = rawValue === '' ? '' : Math.max(0, Number.isFinite(numeric) ? numeric : 0);
-        }
-
-        chipperFinisherEntry = entry;
-
-        if (chipperSaveStatus !== 'idle') {
-                chipperSaveStatus = 'idle';
-                chipperSaveMessage = '';
-        }
-}
-
-function saveChipperFinisher() {
-        const caloriesValue = Number(chipperFinisherEntry.cals);
-        const hasCalories = Number.isFinite(caloriesValue) && caloriesValue > 0;
-        const notes = chipperFinisherEntry.notes ? chipperFinisherEntry.notes.trim() : '';
-
-        if (!hasCalories && !notes) {
-                chipperSaveStatus = 'info';
-                chipperSaveMessage = 'Add calories or notes before saving.';
-                return;
-        }
-
-        const totals = createCumulativeScore();
-        if (hasCalories) {
-                totals.cals = caloriesValue;
-        }
-        if (notes) {
-                totals.notes = notes;
-        }
-
-        chipperFinisherTotals = totals;
-
-        const record = {
-                stationName: chipperFinisherName || 'Chipper Finisher',
-                category: chipperFinisherCategory,
-                score: totals
-        };
-
-        const existingIndex = cumulativeScores.findIndex(
-                (item) => (item.stationName || '') === record.stationName
-        );
-
-        if (existingIndex === -1) {
-                cumulativeScores = [...cumulativeScores, record];
-        } else {
-                const updated = [...cumulativeScores];
-                updated[existingIndex] = record;
-                cumulativeScores = updated;
-        }
-
-        chipperFinisherEntry = {
-                ...chipperFinisherEntry,
-                cals: hasCalories ? String(caloriesValue) : '',
-                notes
-        };
-
-        chipperSaveStatus = 'success';
-        chipperSaveMessage = 'Finisher result saved.';
 }
 
 function handleEntryChange(index, field, rawValue) {
@@ -583,9 +536,39 @@ function hasLoggedScores() {
         });
 }
 
-function startUpload() {
-        if (finalSaveStatus === 'saving' || hasSavedFinalScore) return;
-        if (!hasLoggedScores()) {
+function hasCompletionEntries() {
+        return Boolean(completionSummaryEntry) || Boolean(completionFinisherEntry);
+}
+
+function completionLogComplete() {
+        if (!requiresCompletionLog) return true;
+        if (isChipperMode) {
+                const needsFinisher = Boolean(finisherMetric);
+                return Boolean(completionSummaryEntry) && (!needsFinisher || Boolean(completionFinisherEntry));
+        }
+        if (isAmrapType) {
+                return Boolean(completionSummaryEntry);
+        }
+        return true;
+}
+
+function openCompletionModal() {
+        completionError = '';
+        if (isChipperMode && !completionForm.progressExercise && chipperSteps.length) {
+                completionForm = { ...completionForm, progressExercise: chipperSteps[0]?.name ?? '' };
+        } else {
+                completionForm = { ...completionForm };
+        }
+        showCompletionModal = true;
+}
+
+function cancelCompletionModal() {
+        completionError = '';
+        showCompletionModal = false;
+}
+
+function proceedToUpload() {
+        if (!hasLoggedScores() && !hasCompletionEntries()) {
                 finalSaveStatus = 'error';
                 finalSaveMessage = 'Log at least one score before uploading your workout.';
                 return;
@@ -596,6 +579,121 @@ function startUpload() {
         finalSaveStatus = 'idle';
         finalSaveMessage = '';
         showFeedbackModal = true;
+}
+
+function submitCompletionForm() {
+        completionError = '';
+
+        if (isChipperMode) {
+                const metric = finisherMetric;
+                const metricValue = Number(completionForm.finisherValue);
+                const metricValid = !metric || (Number.isFinite(metricValue) && metricValue > 0);
+                const completedChipper = Boolean(completionForm.completedChipper);
+                const trimmedExercise = String(completionForm.progressExercise || '').trim();
+                const repsValue = Number(completionForm.progressReps);
+                const repsValid = Number.isFinite(repsValue) && repsValue >= 0;
+                const hasChipperSteps = Array.isArray(chipperSteps) && chipperSteps.length > 0;
+
+                if (!metricValid) {
+                        const label = metric?.label?.toLowerCase() ?? 'result';
+                        completionError = `Enter the ${label} you finished with.`;
+                        return;
+                }
+
+                if (!completedChipper && hasChipperSteps) {
+                        if (!trimmedExercise) {
+                                completionError = 'Select the exercise you reached before time capped.';
+                                return;
+                        }
+                        if (!repsValid) {
+                                completionError = 'Enter the reps completed before the clock ran out.';
+                                return;
+                        }
+                }
+
+                const safeMetric = metric ? Math.round(metricValue) : null;
+                const safeReps = Number.isFinite(repsValue) ? Math.max(0, Math.floor(repsValue)) : 0;
+
+                completionForm = {
+                        ...completionForm,
+                        finisherValue: metric && safeMetric !== null ? String(safeMetric) : '',
+                        progressReps: completedChipper ? '' : String(safeReps)
+                };
+
+                if (metric) {
+                        const metricKey = metric.key === 'cals' ? 'cals' : 'reps';
+                        completionFinisherEntry = {
+                                stationName: chipperFinisherName || 'Chipper Finisher',
+                                category: chipperFinisherCategory,
+                                score: { [metricKey]: safeMetric ?? 0 }
+                        };
+                } else {
+                        completionFinisherEntry = null;
+                }
+
+                let summaryNote = 'Completed the entire chipper before the time cap.';
+                if (!completedChipper) {
+                        summaryNote = hasChipperSteps && trimmedExercise
+                                ? `Time capped on ${trimmedExercise} at ${safeReps} rep${safeReps === 1 ? '' : 's'}.`
+                                : `Time capped with ${safeReps} rep${safeReps === 1 ? '' : 's'} remaining.`;
+                }
+
+                completionSummaryEntry = {
+                        stationName: 'Chipper Progress',
+                        category: 'Chipper',
+                        score: { notes: summaryNote }
+                };
+        } else if (isAmrapType) {
+                const roundsValue = Number(completionForm.amrapRounds);
+                const extraValue = Number(completionForm.amrapReps);
+                const hasRounds = Number.isFinite(roundsValue) && roundsValue >= 0;
+                const hasExtra = Number.isFinite(extraValue) && extraValue >= 0;
+
+                if (!hasRounds || !hasExtra) {
+                        completionError = 'Enter the rounds and remaining reps to finish.';
+                        return;
+                }
+
+                const safeRounds = Math.max(0, Math.floor(roundsValue));
+                const safeReps = Math.max(0, Math.floor(extraValue));
+
+                if (safeRounds === 0 && safeReps === 0) {
+                        completionError = 'Log at least one round or rep to complete the AMRAP.';
+                        return;
+                }
+
+                completionForm = {
+                        ...completionForm,
+                        amrapRounds: String(safeRounds),
+                        amrapReps: String(safeReps)
+                };
+
+                let summaryNote = `Completed ${safeRounds} round${safeRounds === 1 ? '' : 's'}`;
+                if (safeReps > 0) {
+                        summaryNote += ` + ${safeReps} rep${safeReps === 1 ? '' : 's'}`;
+                }
+
+                completionSummaryEntry = {
+                        stationName: 'AMRAP Result',
+                        category: 'AMRAP',
+                        score: { notes: summaryNote }
+                };
+                completionFinisherEntry = null;
+        }
+
+        showCompletionModal = false;
+        proceedToUpload();
+}
+
+function startUpload() {
+        if (finalSaveStatus === 'saving' || hasSavedFinalScore) return;
+
+        if (!completionLogComplete()) {
+                openCompletionModal();
+                return;
+        }
+
+        proceedToUpload();
 }
 
 function handleFeedbackSubmit(includeFeedback) {
@@ -613,6 +711,12 @@ function cancelFeedback() {
 
 async function saveFinalScores() {
         if (hasSavedFinalScore || !$user?.uid) return;
+
+        if (!completionLogComplete()) {
+                finalSaveStatus = 'error';
+                finalSaveMessage = 'Finish logging your workout before uploading.';
+                return;
+        }
 
         showFeedbackModal = false;
         finalSaveStatus = 'saving';
@@ -654,7 +758,40 @@ async function saveFinalScores() {
                 })
                 .filter(Boolean);
 
-        if (!cleanedScores.length) {
+        const completionRecords = [completionFinisherEntry, completionSummaryEntry]
+                .map((entry) => {
+                        if (!entry || !entry.score) return null;
+                        const cleaned = {};
+                        if (Number(entry.score.reps) > 0) cleaned.reps = Number(entry.score.reps);
+                        if (Number(entry.score.cals) > 0) cleaned.cals = Number(entry.score.cals);
+                        if (entry.score.notes && String(entry.score.notes).trim()) {
+                                cleaned.notes = String(entry.score.notes).trim();
+                        }
+
+                        if (!Object.keys(cleaned).length) {
+                                return null;
+                        }
+
+                        const stationName =
+                                typeof entry.stationName === 'string' && entry.stationName.trim()
+                                        ? entry.stationName.trim()
+                                        : null;
+                        const category =
+                                typeof entry.category === 'string' && entry.category.trim()
+                                        ? entry.category.trim()
+                                        : null;
+
+                        return {
+                                ...(stationName !== null ? { stationName } : {}),
+                                ...(category !== null ? { category } : {}),
+                                score: cleaned
+                        };
+                })
+                .filter(Boolean);
+
+        const combinedScores = [...cleanedScores, ...completionRecords];
+
+        if (!combinedScores.length) {
                 finalSaveStatus = 'error';
                 finalSaveMessage = 'Log at least one score before uploading your workout.';
                 return;
@@ -671,7 +808,7 @@ async function saveFinalScores() {
                         sessionDate: session.sessionDate ?? null,
                         totalTimeMinutes: totalTime,
                         date: serverTimestamp(),
-                        exerciseScores: cleanedScores
+                        exerciseScores: combinedScores
                 });
 
                 const attendanceRef = doc(db, 'attendance', `${session.id}_${$user.uid}`);
@@ -891,10 +1028,13 @@ $: chipperFinisherCategory = normaliseCategory(
         chipperFinisher?.category,
         'Cardio Machine'
 );
-$: showChipperFinisherLogger = Boolean(isChipperMode && chipperFinisher && myCurrentStationIndex === -1);
-$: hasChipperResult =
-        Number(chipperFinisherTotals?.cals ?? 0) > 0 ||
-        Boolean(chipperFinisherTotals?.notes && chipperFinisherTotals.notes.trim());
+$: finisherMetric = isChipperMode ? getFinisherMetricForCategory(chipperFinisherCategory) : null;
+$: if (isChipperMode && chipperSteps.length) {
+        const names = chipperSteps.map((step) => step?.name ?? '');
+        if (!completionForm.progressExercise || !names.includes(completionForm.progressExercise)) {
+                completionForm = { ...completionForm, progressExercise: names[0] ?? '' };
+        }
+}
 
 $: currentP1Task = myStationData?.p1?.task ? String(myStationData.p1.task).trim() : '';
 $: currentP2Task = myStationData?.p2?.task ? String(myStationData.p2.task).trim() : '';
@@ -1008,468 +1148,467 @@ function formatTime(s) {
 }
 </script>
 
+
 <div class="tracker-container">
-        <header class="tracker-header">
-                <h1>{liveState.phase}</h1>
-                <div class="main-time">{formatTime(liveState.remaining)}</div>
-                {#if liveState.currentStationMeta?.category || intervalDuration}
-                        <div class="phase-meta">
-                                {#if liveState.currentStationMeta?.category}
-                                        <span class="phase-chip">{liveState.currentStationMeta.category}</span>
-                                {/if}
-                                {#if intervalDuration}
-                                        <span class="phase-chip">Interval: {Math.round(intervalDuration)}s</span>
-                                {/if}
-                        </div>
-                {/if}
-        </header>
-
-        {#if isChipperMode}
-                <section class="chipper-overview" aria-labelledby="chipper-title">
-                        <div class="chipper-header">
-                                <h2 id="chipper-title">Chipper flow</h2>
-                                <p>Work from the top of the pyramid down, then hit the finisher for max calories.</p>
-                        </div>
-
-                        {#if chipperGroups.length}
-                                <div class="chipper-pyramid">
-                                        {#each chipperGroups as group, groupIndex}
-                                                <div class="chipper-tier" data-group={groupIndex}>
-                                                        <div class="tier-reps">{typeof group.reps === 'number' ? `${group.reps}` : group.reps}</div>
-                                                        <ul class="tier-movements">
-                                                                {#each group.items as item}
-                                                                        <li>
-                                                                                <span class="tier-order">#{item.order}</span>
-                                                                                <span class="tier-name">{item.name}</span>
-                                                                                {#if item.category}
-                                                                                        <span class="tier-category">{item.category}</span>
-                                                                                {/if}
-                                                                        </li>
-                                                                {/each}
-                                                        </ul>
-                                                </div>
-                                        {/each}
-                                </div>
-                        {:else}
-                                <p class="chipper-empty">No chipper movements configured yet.</p>
-                        {/if}
-
-                        {#if chipperFinisher?.name}
-                                <div class="chipper-finisher-card">
-                                        <span class="finisher-label">Finisher</span>
-                                        <div class="finisher-details">
-                                                <strong>{chipperFinisher.name}</strong>
-                                                <span>{chipperFinisher.description || 'Max calories until the clock hits zero.'}</span>
-                                        </div>
-                                </div>
-                        {/if}
-                </section>
-        {/if}
-
-        {#if workout.mode === 'Partner' && showPairingControls}
-                <section class="pairing-controls" aria-live="polite">
-                        <div class="pairing-copy">
-                                <h2>Partner pairing</h2>
-                                <p>Choose how you'd like to train for this partner workout.</p>
-                        </div>
-                        <div class="pairing-actions">
-                                <div class="pairing-toggle" role="radiogroup" aria-label="Partner preference">
-                                        <button
-                                                type="button"
-                                                class:active={isTrainingSolo}
-                                                class:locked={pairingLocked}
-                                                on:click={selectSoloMode}
-                                                aria-pressed={isTrainingSolo}
-                                                disabled={rosterStatus !== 'idle' || pairingLocked}
-                                        >
-                                                I'm riding solo
-                                        </button>
-                                        <button
-                                                type="button"
-                                                class:active={!isTrainingSolo}
-                                                class:locked={pairingLocked}
-                                                on:click={selectPartnerMode}
-                                                aria-pressed={!isTrainingSolo}
-                                                disabled={rosterStatus !== 'idle' || pairingLocked}
-                                        >
-                                                Pair me up
-                                        </button>
-                                </div>
-                                <p class="pairing-status" aria-live="polite">{partnerStatusText}</p>
-                                {#if pairingLocked}
-                                        <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
-                                {/if}
-                                {#if rosterError}
-                                        <p class="pairing-error">{rosterError}</p>
-                                {/if}
-                        </div>
-                </section>
-        {:else if workout.mode === 'Partner'}
-                <div class="pairing-summary" aria-live="polite">
-                        <div class="summary-row">
-                                <span class={`summary-chip ${isTrainingSolo ? 'solo' : 'partner'}`}>
-                                        {isTrainingSolo ? 'Training solo' : 'Partner rotation'}
-                                </span>
-                                {#if myPartnerRole}
-                                        <span class="summary-chip role">{myPartnerRole}</span>
-                                {/if}
-                                {#if pairingLocked}
-                                        <span class="summary-chip locked">Locked</span>
-                                {/if}
-                        </div>
-                        <p class="pairing-status">{partnerStatusText}</p>
-                        {#if rosterError}<p class="pairing-error">{rosterError}</p>{/if}
-                        {#if pairingLocked}
-                                <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
-                        {/if}
-                </div>
-        {/if}
-
-        {#if myStationData}
-                <main class="tracker-main">
-                        <div class="score-card">
-                                <header class="score-header">
-                                        <div class="score-title">
-                                                <span class="score-eyebrow">Log your score</span>
-                                                <h2>{myActiveTaskLabel || myStationData.name}</h2>
-                                                <p class="score-subtitle">
-                                                        {#if isChipperMode}
-                                                                Finisher · {myStationData.name}
-                                                        {:else}
-                                                                Station {myCurrentStationIndex + 1} · {myStationData.name}
-                                                        {/if}
-                                                </p>
-                                        </div>
-                                        <div class="score-meta">
-                                                {#if metricLabel}<span class="score-chip emphasis">{metricLabel}</span>{/if}
-                                                {#if activeTask.category && metricLabel !== activeTask.category}
-                                                        <span class="score-chip subtle">{activeTask.category}</span>
+        <div class="tracker-layout">
+                <aside class="session-sidebar">
+                        <section class="timer-card" aria-live="polite">
+                                <header class="timer-header">
+                                        <span class="phase-label">{liveState.phase}</span>
+                                </header>
+                                <div class="time-display">{formatTime(liveState.remaining)}</div>
+                                {#if liveState.currentStationMeta?.category || intervalDuration}
+                                        <div class="phase-meta">
+                                                {#if liveState.currentStationMeta?.category}
+                                                        <span class="phase-chip">{liveState.currentStationMeta.category}</span>
                                                 {/if}
                                                 {#if intervalDuration}
-                                                        <span class="score-chip">Interval: {Math.round(intervalDuration)}s</span>
+                                                        <span class="phase-chip">Interval: {Math.round(intervalDuration)}s</span>
                                                 {/if}
                                         </div>
-                                </header>
+                                {/if}
+                        </section>
 
-                                <p class="score-helper">
-                                        {#if isChipperMode}
-                                                Log the calories you rack up once you reach the finisher. Add a new entry each time you hop back on the machine.
-                                        {:else}
-                                                Record the effort you hit for this interval. We'll add it to your running total automatically.
-                                        {/if}
-                                </p>
-
-                                <div class="input-grid" class:two-column={metricCategory === 'Resistance' || metricCategory === 'Cardio Machine'}>
-                                        {#if metricCategory === 'Resistance'}
-                                                <label class="input-field">
-                                                        <span>Reps</span>
-                                                        <input
-                                                                type="number"
-                                                                inputmode="numeric"
-                                                                min="0"
-                                                                placeholder="e.g. 12"
-                                                                value={currentEntries[myCurrentStationIndex].score.reps}
-                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
-                                                        />
-                                                </label>
-                                                <label class="input-field">
-                                                        <span>Weight (kg)</span>
-                                                        <input
-                                                                type="number"
-                                                                inputmode="decimal"
-                                                                min="0"
-                                                                placeholder="e.g. 40"
-                                                                value={currentEntries[myCurrentStationIndex].score.weight}
-                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'weight', event.target.value)}
-                                                        />
-                                                </label>
-                                        {:else if metricCategory === 'Cardio Machine'}
-                                                <label class="input-field">
-                                                        <span>Calories</span>
-                                                        <input
-                                                                type="number"
-                                                                inputmode="numeric"
-                                                                min="0"
-                                                                placeholder="e.g. 20"
-                                                                value={currentEntries[myCurrentStationIndex].score.cals}
-                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'cals', event.target.value)}
-                                                        />
-                                                </label>
-                                                <label class="input-field">
-                                                        <span>Distance (m)</span>
-                                                        <input
-                                                                type="text"
-                                                                inputmode="decimal"
-                                                                placeholder="e.g. 250m"
-                                                                value={currentEntries[myCurrentStationIndex].score.dist}
-                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'dist', event.target.value)}
-                                                        />
-                                                </label>
-                                        {:else}
-                                                <label class="input-field full">
-                                                        <span>Reps</span>
-                                                        <input
-                                                                type="number"
-                                                                inputmode="numeric"
-                                                                min="0"
-                                                                placeholder="e.g. 15"
-                                                                value={currentEntries[myCurrentStationIndex].score.reps}
-                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
-                                                        />
-                                                </label>
-                                        {/if}
-
-                                        <label class="input-field full notes-field">
-                                                <span>Notes (optional)</span>
-                                                <textarea
-                                                        rows="2"
-                                                        placeholder="Add cues, scaling or modifications"
-                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'notes', event.target.value)}
-                                                >{currentEntries[myCurrentStationIndex].score.notes}</textarea>
-                                        </label>
-                                </div>
-
-                                <div class="actions-row">
-                                        <button
-                                                class="btn btn-save"
-                                                on:click={() => commitStationScore(myCurrentStationIndex)}
-                                                disabled={!hasPendingForCurrent || rosterStatus === 'leaving'}
-                                        >
-                                                ✓ Save interval
-                                        </button>
-
-                                        {#if lastSaveMessage && lastSavedStationIndex === myCurrentStationIndex}
-                                                <p class={`save-feedback ${lastSaveType}`}>{lastSaveMessage}</p>
-                                        {/if}
-                                </div>
-
-                                {#if hasTotals(myCurrentStationIndex)}
-                                        <div class="totals">
-                                                <h3>Totals logged</h3>
-                                                <ul>
-                                                        {#if Number(cumulativeScores[myCurrentStationIndex].score.reps) > 0}
-                                                                <li><span>Reps</span><span>{cumulativeScores[myCurrentStationIndex].score.reps}</span></li>
-                                                        {/if}
-                                                        {#if Number(cumulativeScores[myCurrentStationIndex].score.weight) > 0}
-                                                                <li><span>Weight</span><span>{cumulativeScores[myCurrentStationIndex].score.weight} kg</span></li>
-                                                        {/if}
-                                                        {#if Number(cumulativeScores[myCurrentStationIndex].score.cals) > 0}
-                                                                <li><span>Calories</span><span>{cumulativeScores[myCurrentStationIndex].score.cals}</span></li>
-                                                        {/if}
-                                                        {#if cumulativeScores[myCurrentStationIndex].score.dist && cumulativeScores[myCurrentStationIndex].score.dist.trim()}
-                                                                <li><span>Distance</span><span>{cumulativeScores[myCurrentStationIndex].score.dist}</span></li>
-                                                        {/if}
-                                                        {#if cumulativeScores[myCurrentStationIndex].score.notes && cumulativeScores[myCurrentStationIndex].score.notes.trim()}
-                                                                <li class="notes-total"><span>Notes</span><span>{cumulativeScores[myCurrentStationIndex].score.notes}</span></li>
-                                                        {/if}
-                                                </ul>
+                        {#if isChipperMode}
+                                <section class="chipper-overview" aria-labelledby="chipper-title">
+                                        <div class="chipper-header">
+                                                <h2 id="chipper-title">Chipper flow</h2>
+                                                <p>Work from the top of the pyramid, then finish strong when the clock ends.</p>
                                         </div>
-                                {/if}
-                        </div>
-                </main>
 
-                <footer class="station-info">
-                        <div class="station-display current">
-                                <div class="station-heading">
-                                        <span class="station-eyebrow">Now</span>
-                                        <h2>{myStationData.name}</h2>
-                                        <p class="station-meta">
-                                                {#if isChipperMode}
-                                                        Finisher
-                                                {:else}
-                                                        Station {myCurrentStationIndex + 1}
-                                                {/if}
-                                                {#if stationCategory}
-                                                        <span aria-hidden="true">·</span>
-                                                        {stationCategory}
-                                                {/if}
-                                        </p>
-                                </div>
-                                {#if workout.mode === 'Partner'}
-                                        {#if isTrainingSolo}
-                                                {#if soloPrimaryTask}
-                                                        <p class="start-callout">
-                                                                Training solo? Start on <strong>{soloPrimaryTask}</strong>
-                                                                {#if soloSecondaryTask}
-                                                                        , then transition to <strong>{soloSecondaryTask}</strong>
-                                                                {/if}
-                                                                .
-                                                        </p>
-                                                {/if}
-                                        {:else if myPartnerSlot !== -1 && myActiveTaskLabel}
-                                                <p class="start-callout">
-                                                        {#if myPartnerRole}<span class="start-role">{myPartnerRole}</span>{/if}
-                                                        Start on <strong>{myActiveTaskLabel}</strong>.
-                                                </p>
-                                        {/if}
-                                {/if}
-                                {#if workout.mode === 'Partner' && upcomingTask && !isTrainingSolo && myPartnerSlot !== -1 && upcomingTask.name !== myActiveTaskLabel}
-                                        <p class="upcoming-note">Next interval: <strong>{upcomingTask.name}</strong></p>
-                                {/if}
-                                <div class="task-list">
-                                        <div class="task-line">
-                                                <span class="task-label p1">P1</span>
-                                                <div class="task-content">
-                                                        <span class="task-text">{myStationData.p1?.task}</span>
-                                                        {#if primaryTaskDetails.category}
-                                                                <span class="task-chip">{primaryTaskDetails.category}</span>
-                                                        {/if}
+                                        {#if chipperGroups.length}
+                                                <div class="chipper-pyramid">
+                                                        {#each chipperGroups as group, groupIndex}
+                                                                <div class="chipper-tier" data-group={groupIndex}>
+                                                                        <div class="tier-reps">{typeof group.reps === 'number' ? `${group.reps}` : group.reps}</div>
+                                                                        <ul class="tier-movements">
+                                                                                {#each group.items as item}
+                                                                                        <li>
+                                                                                                <span class="tier-order">#{item.order}</span>
+                                                                                                <span class="tier-name">{item.name}</span>
+                                                                                                {#if item.category}
+                                                                                                        <span class="tier-category">{item.category}</span>
+                                                                                                {/if}
+                                                                                        </li>
+                                                                                {/each}
+                                                                        </ul>
+                                                                </div>
+                                                        {/each}
                                                 </div>
-                                        </div>
-                                        {#if myStationData.p2?.task}
-                                                <div class="task-line">
-                                                        <span class="task-label p2">P2</span>
-                                                        <div class="task-content">
-                                                                <span class="task-text">{myStationData.p2.task}</span>
-                                                                {#if secondaryTaskDetails.category}
-                                                                        <span class="task-chip">{secondaryTaskDetails.category}</span>
-                                                                {/if}
+                                        {:else}
+                                                <p class="chipper-empty">No chipper movements configured yet.</p>
+                                        {/if}
+
+                                        {#if chipperFinisher?.name}
+                                                <div class="chipper-finisher-card">
+                                                        <span class="finisher-label">Finisher</span>
+                                                        <div class="finisher-details">
+                                                                <strong>{chipperFinisher.name}</strong>
+                                                                <span>{chipperFinisher.description || 'Max effort until the timer ends.'}</span>
                                                         </div>
                                                 </div>
                                         {/if}
-                                </div>
-                        </div>
-                        {#if nextStationData}
-                                <div class="station-display next">
+                                </section>
+                        {:else if myStationData}
+                                <section class="station-overview" aria-labelledby="station-now-title">
                                         <div class="station-heading">
-                                                <span class="station-eyebrow">Up next</span>
-                                                <h2>{nextStationData.name}</h2>
+                                                <span class="station-eyebrow">Now</span>
+                                                <h2 id="station-now-title">{myStationData.name}</h2>
                                                 <p class="station-meta">
-                                                        Station {myNextStationIndex + 1}
-                                                        {#if nextStationCategory}
+                                                        Station {myCurrentStationIndex + 1}
+                                                        {#if stationCategory}
                                                                 <span aria-hidden="true">·</span>
-                                                                {nextStationCategory}
+                                                                {stationCategory}
                                                         {/if}
                                                 </p>
                                         </div>
+                                        {#if workout.mode === 'Partner'}
+                                                {#if isTrainingSolo}
+                                                        {#if soloPrimaryTask}
+                                                                <p class="start-callout">
+                                                                        Training solo? Start on <strong>{soloPrimaryTask}</strong>
+                                                                        {#if soloSecondaryTask}
+                                                                                , then transition to <strong>{soloSecondaryTask}</strong>.
+                                                                        {:else}.
+                                                                        {/if}
+                                                                </p>
+                                                        {/if}
+                                                {:else if myPartnerSlot !== -1 && myActiveTaskLabel}
+                                                        <p class="start-callout">
+                                                                {#if myPartnerRole}<span class="start-role">{myPartnerRole}</span>{/if}
+                                                                Start on <strong>{myActiveTaskLabel}</strong>.
+                                                        </p>
+                                                {/if}
+                                        {/if}
+                                        {#if workout.mode === 'Partner' && upcomingTask && !isTrainingSolo && myPartnerSlot !== -1 && upcomingTask.name !== myActiveTaskLabel}
+                                                <p class="upcoming-note">Next interval: <strong>{upcomingTask.name}</strong></p>
+                                        {/if}
+                                        <div class="task-list">
+                                                <div class="task-line">
+                                                        <span class="task-label">Primary</span>
+                                                        <span class="task-name">{primaryTaskDetails.name}</span>
+                                                </div>
+                                                {#if secondaryTaskDetails.name && secondaryTaskDetails.name !== primaryTaskDetails.name}
+                                                        <div class="task-line">
+                                                                <span class="task-label secondary">Secondary</span>
+                                                                <span class="task-name">{secondaryTaskDetails.name}</span>
+                                                        </div>
+                                                {/if}
+                                        </div>
+                                        {#if myNextStationIndex !== -1}
+                                                <div class="station-next">
+                                                        <h3>Next</h3>
+                                                        <p>Station {myNextStationIndex + 1}</p>
+                                                        {#if nextStationCategory}
+                                                                <span class="station-chip">{nextStationCategory}</span>
+                                                        {/if}
+                                                </div>
+                                        {/if}
+                                </section>
+                        {:else}
+                                <section class="workout-overview" aria-labelledby="workout-overview-title">
+                                        <h2 id="workout-overview-title">Workout flow</h2>
+                                        <ul>
+                                                {#each workout.exercises as exercise, index}
+                                                        <li>
+                                                                <span class="workout-index">{index + 1}</span>
+                                                                <div class="workout-info">
+                                                                        <strong>{exercise.name}</strong>
+                                                                        {#if exercise.description}
+                                                                                <span>{exercise.description}</span>
+                                                                        {/if}
+                                                                </div>
+                                                        </li>
+                                                {/each}
+                                        </ul>
+                                </section>
+                        {/if}
+                </aside>
+
+                <main class="session-main">
+                        {#if workout.mode === 'Partner' && showPairingControls}
+                                <section class="pairing-controls" aria-live="polite">
+                                        <div class="pairing-copy">
+                                                <h2>Partner pairing</h2>
+                                                <p>Choose how you'd like to train for this partner workout.</p>
+                                        </div>
+                                        <div class="pairing-actions">
+                                                <div class="pairing-toggle" role="radiogroup" aria-label="Partner preference">
+                                                        <button
+                                                                type="button"
+                                                                class:active={isTrainingSolo}
+                                                                class:locked={pairingLocked}
+                                                                on:click={selectSoloMode}
+                                                                aria-pressed={isTrainingSolo}
+                                                                disabled={rosterStatus !== 'idle' || pairingLocked}
+                                                        >
+                                                                I'm riding solo
+                                                        </button>
+                                                        <button
+                                                                type="button"
+                                                                class:active={!isTrainingSolo}
+                                                                class:locked={pairingLocked}
+                                                                on:click={selectPartnerMode}
+                                                                aria-pressed={!isTrainingSolo}
+                                                                disabled={rosterStatus !== 'idle' || pairingLocked}
+                                                        >
+                                                                Pair me up
+                                                        </button>
+                                                </div>
+                                                <p class="pairing-status" aria-live="polite">{partnerStatusText}</p>
+                                                {#if pairingLocked}
+                                                        <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
+                                                {/if}
+                                                {#if rosterError}
+                                                        <p class="pairing-error">{rosterError}</p>
+                                                {/if}
+                                        </div>
+                                </section>
+                        {:else if workout.mode === 'Partner'}
+                                <div class="pairing-summary" aria-live="polite">
+                                        <div class="summary-row">
+                                                <span class={`summary-chip ${isTrainingSolo ? 'solo' : 'partner'}`}>
+                                                        {isTrainingSolo ? 'Training solo' : 'Partner rotation'}
+                                                </span>
+                                                {#if myPartnerRole}
+                                                        <span class="summary-chip role">{myPartnerRole}</span>
+                                                {/if}
+                                                {#if pairingLocked}
+                                                        <span class="summary-chip locked">Locked</span>
+                                                {/if}
+                                        </div>
+                                        <p class="pairing-status">{partnerStatusText}</p>
+                                        {#if rosterError}<p class="pairing-error">{rosterError}</p>{/if}
+                                        {#if pairingLocked}
+                                                <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
+                                        {/if}
                                 </div>
                         {/if}
-                </footer>
-        {:else}
-                <main class="tracker-main">
-                        <div class="waiting-message">
-                                {#if workout.mode === 'Partner'}
-                                        <h2>{hasJoinedRoster ? 'Waiting for your station...' : 'Ready to partner up?'}</h2>
-                                        <p>
-                                                {#if hasJoinedRoster}
-                                                        Hang tight while we slot you into the next station.
-                                                {:else}
-                                                        Join the rotation when you're ready and we'll assign you to a station as soon as the next interval starts.
-                                                {/if}
-                                        </p>
-                                        {#if !hasJoinedRoster && !pairingLocked}
-                                                <button
-                                                        class="btn btn-primary"
-                                                        on:click={() => {
-                                                                wantsPartnerPairing = true;
-                                                                void joinStationRoster();
-                                                        }}
-                                                        disabled={!userProfile.displayName || rosterStatus === 'joining'}
-                                                >
-                                                        {rosterStatus === 'joining' ? 'Joining...' : 'Join rotation'}
-                                                </button>
-                                        {/if}
-                                {:else if liveState.isComplete}
-                                        <h2>Session finished</h2>
-                                        <p>Nice work! Log your finisher result below to wrap things up.</p>
-                                {:else if hasSessionStarted}
-                                        <h2>Workout underway</h2>
-                                        <p>The workout has started. We'll assign you to a station as soon as one opens up.</p>
-                                {:else}
-                                        <h2>Connecting to Session...</h2>
-                                        <p>Waiting for the admin to start the workout and assign you to a station.</p>
-                                {/if}
-                        </div>
 
-                        {#if showChipperFinisherLogger}
-                                <div class="score-card">
+                        {#if myStationData}
+                                <section class="score-card">
                                         <header class="score-header">
                                                 <div class="score-title">
-                                                        <span class="score-eyebrow">Log your result</span>
-                                                        <h2>{chipperFinisherName}</h2>
+                                                        <span class="score-eyebrow">Log your score</span>
+                                                        <h2>{myActiveTaskLabel || myStationData.name}</h2>
                                                         <p class="score-subtitle">
-                                                                Finisher · {chipperFinisher?.description || 'Max calories until the clock hits zero.'}
+                                                                {#if isChipperMode}
+                                                                        Finisher · {myStationData.name}
+                                                                {:else}
+                                                                        Station {myCurrentStationIndex + 1} · {myStationData.name}
+                                                                {/if}
                                                         </p>
                                                 </div>
                                                 <div class="score-meta">
-                                                        <span class="score-chip emphasis">Calories</span>
-                                                        {#if chipperFinisherCategory}
-                                                                <span class="score-chip subtle">{chipperFinisherCategory}</span>
+                                                        {#if metricLabel}<span class="score-chip emphasis">{metricLabel}</span>{/if}
+                                                        {#if activeTask.category && metricLabel !== activeTask.category}
+                                                                <span class="score-chip subtle">{activeTask.category}</span>
                                                         {/if}
-                                                        <span class="score-chip">Finisher</span>
+                                                        {#if intervalDuration}
+                                                                <span class="score-chip">Interval: {Math.round(intervalDuration)}s</span>
+                                                        {/if}
                                                 </div>
                                         </header>
 
                                         <p class="score-helper">
-                                                Record the max calories you finish with once the timer ends. We'll include it when you upload your workout.
+                                                {#if isChipperMode}
+                                                        Log the calories you rack up once you reach the finisher. Add a new entry each time you hop back on the machine.
+                                                {:else}
+                                                        Record the effort you hit for this interval. We'll add it to your running total automatically.
+                                                {/if}
                                         </p>
 
-                                        <div class="input-grid">
-                                                <label class="input-field full">
-                                                        <span>Max calories</span>
-                                                        <input
-                                                                type="number"
-                                                                inputmode="numeric"
-                                                                min="0"
-                                                                placeholder="e.g. 85"
-                                                                value={chipperFinisherEntry.cals}
-                                                                on:input={(event) => handleChipperFinisherInput('cals', event.target.value)}
-                                                        />
-                                                </label>
+                                        <div class="input-grid" class:two-column={metricCategory === 'Resistance' || metricCategory === 'Cardio Machine'}>
+                                                {#if metricCategory === 'Resistance'}
+                                                        <label class="input-field">
+                                                                <span>Reps</span>
+                                                                <input
+                                                                        type="number"
+                                                                        inputmode="numeric"
+                                                                        min="0"
+                                                                        placeholder="e.g. 12"
+                                                                        value={currentEntries[myCurrentStationIndex].score.reps}
+                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
+                                                                />
+                                                        </label>
+                                                        <label class="input-field">
+                                                                <span>Weight (kg)</span>
+                                                                <input
+                                                                        type="number"
+                                                                        inputmode="decimal"
+                                                                        min="0"
+                                                                        placeholder="e.g. 40"
+                                                                        value={currentEntries[myCurrentStationIndex].score.weight}
+                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'weight', event.target.value)}
+                                                                />
+                                                        </label>
+                                                {:else if metricCategory === 'Cardio Machine'}
+                                                        <label class="input-field">
+                                                                <span>Calories</span>
+                                                                <input
+                                                                        type="number"
+                                                                        inputmode="numeric"
+                                                                        min="0"
+                                                                        placeholder="e.g. 20"
+                                                                        value={currentEntries[myCurrentStationIndex].score.cals}
+                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'cals', event.target.value)}
+                                                                />
+                                                        </label>
+                                                        <label class="input-field">
+                                                                <span>Distance (m)</span>
+                                                                <input
+                                                                        type="text"
+                                                                        inputmode="decimal"
+                                                                        placeholder="e.g. 250m"
+                                                                        value={currentEntries[myCurrentStationIndex].score.dist}
+                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'dist', event.target.value)}
+                                                                />
+                                                        </label>
+                                                {:else}
+                                                        <label class="input-field full">
+                                                                <span>Reps</span>
+                                                                <input
+                                                                        type="number"
+                                                                        inputmode="numeric"
+                                                                        min="0"
+                                                                        placeholder="e.g. 15"
+                                                                        value={currentEntries[myCurrentStationIndex].score.reps}
+                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
+                                                                />
+                                                        </label>
+                                                {/if}
 
                                                 <label class="input-field full notes-field">
                                                         <span>Notes (optional)</span>
                                                         <textarea
                                                                 rows="2"
-                                                                placeholder="Add optional notes"
-                                                                on:input={(event) => handleChipperFinisherInput('notes', event.target.value)}
-                                                        >{chipperFinisherEntry.notes}</textarea>
+                                                                placeholder="Add cues, scaling or modifications"
+                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'notes', event.target.value)}
+                                                        >{currentEntries[myCurrentStationIndex].score.notes}</textarea>
                                                 </label>
                                         </div>
 
                                         <div class="actions-row">
-                                                <button class="btn btn-save" on:click={saveChipperFinisher} disabled={chipperSaveStatus === 'saving'}>
-                                                        ✓ Save result
+                                                <button
+                                                        class="btn btn-save"
+                                                        on:click={() => commitStationScore(myCurrentStationIndex)}
+                                                        disabled={!hasPendingForCurrent || rosterStatus === 'leaving'}
+                                                >
+                                                        ✓ Save interval
                                                 </button>
 
-                                                {#if chipperSaveMessage}
-                                                        <p class={`save-feedback ${chipperSaveStatus}`}>{chipperSaveMessage}</p>
+                                                {#if lastSaveMessage && lastSavedStationIndex === myCurrentStationIndex}
+                                                        <p class={`save-feedback ${lastSaveType}`}>{lastSaveMessage}</p>
                                                 {/if}
                                         </div>
 
-                                        {#if hasChipperResult}
+                                        {#if hasTotals(myCurrentStationIndex)}
                                                 <div class="totals">
-                                                        <h3>Result logged</h3>
+                                                        <h3>Totals logged</h3>
                                                         <ul>
-                                                                {#if Number(chipperFinisherTotals.cals) > 0}
-                                                                        <li><span>Calories</span><span>{chipperFinisherTotals.cals}</span></li>
+                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.reps) > 0}
+                                                                        <li><span>Reps</span><span>{cumulativeScores[myCurrentStationIndex].score.reps}</span></li>
                                                                 {/if}
-                                                                {#if chipperFinisherTotals.notes && chipperFinisherTotals.notes.trim()}
-                                                                        <li class="notes-total"><span>Notes</span><span>{chipperFinisherTotals.notes}</span></li>
+                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.weight) > 0}
+                                                                        <li><span>Weight</span><span>{cumulativeScores[myCurrentStationIndex].score.weight} kg</span></li>
+                                                                {/if}
+                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.cals) > 0}
+                                                                        <li><span>Calories</span><span>{cumulativeScores[myCurrentStationIndex].score.cals}</span></li>
+                                                                {/if}
+                                                                {#if cumulativeScores[myCurrentStationIndex].score.dist && cumulativeScores[myCurrentStationIndex].score.dist.trim()}
+                                                                        <li><span>Distance</span><span>{cumulativeScores[myCurrentStationIndex].score.dist}</span></li>
+                                                                {/if}
+                                                                {#if cumulativeScores[myCurrentStationIndex].score.notes && cumulativeScores[myCurrentStationIndex].score.notes.trim()}
+                                                                        <li class="notes-total"><span>Notes</span><span>{cumulativeScores[myCurrentStationIndex].score.notes}</span></li>
                                                                 {/if}
                                                         </ul>
                                                 </div>
                                         {/if}
-                                </div>
+                                </section>
+                        {:else if isChipperMode}
+                                <section class="score-card placeholder">
+                                        <h2>You're on the clock</h2>
+                                        <p>Move through the chipper list on the left. Tap <strong>End workout</strong> when the timer hits zero to log your finish.</p>
+                                </section>
+                        {:else}
+                                <section class="score-card placeholder">
+                                        <h2>Waiting for your station</h2>
+                                        <p>We'll assign you to a station as soon as one opens up. Keep an eye on the timer above.</p>
+                                </section>
+                        {/if}
+
+                        {#if liveState.isComplete}
+                                <section class="post-workout-card" aria-live="polite">
+                                        <h2>Workout complete</h2>
+                                        <p>Upload your results to save them to your dashboard.</p>
+                                        {#if requiresCompletionLog}
+                                                {#if completionFinisherEntry || completionSummaryEntry}
+                                                        <div class="completion-summary">
+                                                                {#if completionFinisherEntry?.score?.cals}
+                                                                        <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.cals} cal{completionFinisherEntry.score.cals === 1 ? '' : 's'}</strong></div>
+                                                                {:else if completionFinisherEntry?.score?.reps}
+                                                                        <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.reps} rep{completionFinisherEntry.score.reps === 1 ? '' : 's'}</strong></div>
+                                                                {/if}
+                                                                {#if completionSummaryEntry?.score?.notes}
+                                                                        <div class="summary-line"><span>Progress</span><strong>{completionSummaryEntry.score.notes}</strong></div>
+                                                                {/if}
+                                                                <button type="button" class="btn btn-outline" on:click={openCompletionModal}>Edit result</button>
+                                                        </div>
+                                                {:else}
+                                                        <p class="completion-hint">Log your finish to wrap up this session.</p>
+                                                        <button type="button" class="btn ghost" on:click={openCompletionModal}>Log finish</button>
+                                                {/if}
+                                        {/if}
+                                        <button
+                                                class="btn btn-primary"
+                                                on:click={startUpload}
+                                                disabled={finalSaveStatus === 'saving' || hasSavedFinalScore}
+                                        >
+                                                {hasSavedFinalScore ? 'Uploaded' : finalSaveStatus === 'saving' ? 'Uploading...' : 'End workout'}
+                                        </button>
+                                        {#if finalSaveMessage}
+                                                <p class={`status ${finalSaveStatus}`}>{finalSaveMessage}</p>
+                                        {/if}
+                                </section>
                         {/if}
                 </main>
-        {/if}
+        </div>
 
-        {#if liveState.isComplete}
-                <section class="post-workout-card" aria-live="polite">
-                        <h2>Workout complete</h2>
-                        <p>Upload your results to save them to your dashboard.</p>
-                        <button
-                                class="btn btn-primary"
-                                on:click={startUpload}
-                                disabled={finalSaveStatus === 'saving' || hasSavedFinalScore}
-                        >
-                                {hasSavedFinalScore ? 'Uploaded' : finalSaveStatus === 'saving' ? 'Uploading...' : 'Upload workout'}
-                        </button>
-                        {#if finalSaveMessage}
-                                <p class={`status ${finalSaveStatus}`}>{finalSaveMessage}</p>
-                        {/if}
-                </section>
+        {#if showCompletionModal}
+                <div class="completion-overlay" role="dialog" aria-modal="true" aria-labelledby="completion-title">
+                        <div class="completion-card">
+                                <h3 id="completion-title">Log your finish</h3>
+                                <p>Capture your result so we can save it with your workout.</p>
+                                {#if isChipperMode}
+                                        {#if finisherMetric}
+                                                <label class="modal-field">
+                                                        <span>{finisherMetric.label}</span>
+                                                        <input
+                                                                type="number"
+                                                                min="0"
+                                                                inputmode="numeric"
+                                                                placeholder={finisherMetric.placeholder}
+                                                                bind:value={completionForm.finisherValue}
+                                                        />
+                                                </label>
+                                        {/if}
+                                        <label class="modal-checkbox">
+                                                <input type="checkbox" bind:checked={completionForm.completedChipper} />
+                                                <span>I completed the full chipper</span>
+                                        </label>
+                                        {#if !completionForm.completedChipper}
+                                                <label class="modal-field">
+                                                        <span>Last exercise reached</span>
+                                                        <select bind:value={completionForm.progressExercise}>
+                                                                {#each chipperSteps as step}
+                                                                        <option value={step.name}>{step.name}</option>
+                                                                {/each}
+                                                        </select>
+                                                </label>
+                                                <label class="modal-field">
+                                                        <span>Reps completed</span>
+                                                        <input
+                                                                type="number"
+                                                                min="0"
+                                                                inputmode="numeric"
+                                                                placeholder="e.g. 20"
+                                                                bind:value={completionForm.progressReps}
+                                                        />
+                                                </label>
+                                        {/if}
+                                {:else if isAmrapType}
+                                        <div class="modal-grid">
+                                                <label class="modal-field">
+                                                        <span>Full rounds</span>
+                                                        <input
+                                                                type="number"
+                                                                min="0"
+                                                                inputmode="numeric"
+                                                                placeholder="e.g. 7"
+                                                                bind:value={completionForm.amrapRounds}
+                                                        />
+                                                </label>
+                                                <label class="modal-field">
+                                                        <span>Extra reps</span>
+                                                        <input
+                                                                type="number"
+                                                                min="0"
+                                                                inputmode="numeric"
+                                                                placeholder="e.g. 15"
+                                                                bind:value={completionForm.amrapReps}
+                                                        />
+                                                </label>
+                                        </div>
+                                {/if}
+                                {#if completionError}
+                                        <p class="completion-error">{completionError}</p>
+                                {/if}
+                                <div class="modal-actions">
+                                        <button type="button" class="btn btn-outline" on:click={cancelCompletionModal}>Cancel</button>
+                                        <button type="button" class="btn btn-primary" on:click={submitCompletionForm}>Save result</button>
+                                </div>
+                        </div>
+                </div>
         {/if}
 
         {#if showFeedbackModal}
@@ -1518,6 +1657,8 @@ function formatTime(s) {
         {/if}
 </div>
 
+
+
 <style>
 :global(body) {
         background-color: var(--bg-main);
@@ -1530,29 +1671,82 @@ function formatTime(s) {
         flex-direction: column;
         height: 100vh;
         background: var(--deep-space);
-        padding: 1.5rem;
-        text-align: center;
+        padding: 1rem;
         gap: 1rem;
+        overflow: hidden;
 }
 
-.tracker-header h1 {
+.tracker-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+        gap: 1rem;
+        height: 100%;
+        min-height: 0;
+}
+
+.session-sidebar,
+.session-main {
+        background: var(--surface-1);
+        border: 1px solid var(--border-color);
+        border-radius: 20px;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        overflow-y: auto;
+        min-height: 0;
+}
+
+.session-sidebar {
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75));
+}
+
+.timer-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        text-align: left;
+}
+
+.timer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+}
+
+.phase-label {
         font-family: var(--font-display);
-        font-size: 2.5rem;
+        font-size: 1.35rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
         color: var(--text-secondary);
 }
 
-.main-time {
+.time-display {
         font-family: var(--font-display);
-        font-size: 4rem;
+        font-size: 3.5rem;
         color: var(--brand-yellow);
         line-height: 1;
 }
 
+@media (max-width: 900px) {
+        .tracker-layout {
+                grid-template-columns: 1fr;
+                grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        }
+
+        .session-sidebar,
+        .session-main {
+                max-height: none;
+        }
+}
+
 .phase-meta {
-        margin-top: 0.5rem;
+        margin-top: 0.25rem;
         display: flex;
         gap: 0.5rem;
-        justify-content: center;
+        justify-content: flex-start;
         flex-wrap: wrap;
 }
 
@@ -1565,6 +1759,101 @@ function formatTime(s) {
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: var(--text-muted);
+}
+
+.station-overview,
+.workout-overview {
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+}
+
+.station-heading h2,
+.workout-overview h2 {
+        margin: 0;
+        font-size: 1.4rem;
+        color: var(--text-secondary);
+}
+
+.station-meta {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+}
+
+.workout-overview ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+}
+
+.workout-overview li {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+        color: var(--text-secondary);
+}
+
+.workout-index {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(148, 163, 184, 0.2);
+        font-family: var(--font-display);
+        font-size: 0.9rem;
+        color: var(--brand-yellow);
+}
+
+.workout-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+}
+
+.workout-info strong {
+        font-size: 0.95rem;
+        color: var(--text-secondary);
+}
+
+.workout-info span {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+}
+
+.station-next {
+        margin-top: 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+}
+
+.station-next h3 {
+        margin: 0;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+}
+
+.station-chip {
+        align-self: flex-start;
+        background: rgba(148, 163, 184, 0.18);
+        border-radius: 999px;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
 }
 
 .pairing-controls {
@@ -1884,25 +2173,39 @@ function formatTime(s) {
         box-shadow: 0 22px 45px -18px rgba(22, 163, 74, 0.9);
 }
 
-.tracker-main {
-        flex-grow: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 1rem;
-        width: 100%;
-}
-
 .score-card {
         background: var(--surface-1);
         width: 100%;
-        max-width: 480px;
         padding: 1.75rem;
         border-radius: 20px;
         border: 1px solid var(--border-color);
         text-align: left;
-        box-shadow: 0 24px 60px -45px rgba(15, 23, 42, 0.9);
+        box-shadow: 0 18px 45px -35px rgba(15, 23, 42, 0.65);
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+}
+
+.score-card.placeholder {
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        background: rgba(15, 23, 42, 0.6);
+        border-style: dashed;
+        box-shadow: none;
+        min-height: 200px;
+}
+
+.score-card.placeholder h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1.4rem;
+        color: var(--text-secondary);
+}
+
+.score-card.placeholder p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-muted);
 }
 
 .score-header {
@@ -2007,14 +2310,14 @@ function formatTime(s) {
 
 .input-field input,
 .input-field textarea {
-        font-size: 1.6rem;
+        font-size: 1.15rem;
         font-family: var(--font-display);
         width: 100%;
         border-radius: 12px;
         border: 1px solid var(--border-color);
         background: var(--deep-space);
         color: var(--text-primary);
-        padding: 0.65rem 0.85rem;
+        padding: 0.55rem 0.75rem;
         text-align: center;
 }
 
@@ -2022,7 +2325,7 @@ function formatTime(s) {
         font-size: 0.95rem;
         font-family: var(--font-body);
         line-height: 1.5;
-        min-height: 72px;
+        min-height: 64px;
         resize: vertical;
         text-align: left;
 }
@@ -2131,24 +2434,6 @@ function formatTime(s) {
         font-weight: 400;
 }
 
-.station-info {
-        flex-shrink: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        width: 100%;
-}
-
-.station-display {
-        background: var(--surface-1);
-        border: 1px solid var(--border-color);
-        border-radius: 18px;
-        padding: 1.25rem 1.5rem;
-        text-align: left;
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-}
 .start-callout {
         margin: 0 0 0.75rem;
         padding: 0.75rem;
@@ -2182,15 +2467,6 @@ function formatTime(s) {
 
 .upcoming-note strong {
         color: var(--text-secondary);
-}
-
-.station-display.current {
-        border-left: 4px solid var(--brand-yellow);
-        box-shadow: 0 26px 70px -52px rgba(253, 224, 71, 0.35);
-}
-
-.station-display.next {
-        opacity: 0.75;
 }
 
 .station-heading {
@@ -2282,30 +2558,15 @@ function formatTime(s) {
         color: #f472b6;
 }
 
-.waiting-message {
-        background: var(--surface-1);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
-        padding: 2rem;
-        max-width: 420px;
-}
-
-.waiting-message h2 {
-        font-size: 1.5rem;
-        color: var(--brand-yellow);
-}
-
-.waiting-message p {
-        color: var(--text-secondary);
-        margin: 0.75rem 0 1rem;
-}
-
 .post-workout-card {
         background: var(--surface-1);
         border: 1px solid var(--border-color);
         border-radius: 16px;
         padding: 1.5rem;
         text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
 }
 
 .post-workout-card h2 {
@@ -2317,6 +2578,38 @@ function formatTime(s) {
 .post-workout-card p {
         margin: 0.5rem 0 1rem;
         color: var(--text-muted);
+}
+
+.completion-summary {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1rem;
+        text-align: left;
+}
+
+.summary-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        font-size: 0.95rem;
+        color: var(--text-secondary);
+}
+
+.summary-line span:first-child {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+}
+
+.completion-hint {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.9rem;
 }
 
 .post-workout-card .status {
@@ -2334,6 +2627,95 @@ function formatTime(s) {
 
 .post-workout-card .status.warning {
         color: var(--brand-yellow);
+}
+
+.completion-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.75);
+        backdrop-filter: blur(6px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        z-index: 1100;
+}
+
+.completion-card {
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        border-radius: 18px;
+        padding: 1.75rem;
+        width: 100%;
+        max-width: 420px;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        box-shadow: 0 26px 65px rgba(15, 23, 42, 0.55);
+}
+
+.completion-card h3 {
+        margin: 0;
+        font-family: var(--font-display);
+        font-size: 1.8rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--brand-yellow);
+}
+
+.modal-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        text-align: left;
+}
+
+.modal-field span {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+}
+
+.modal-field input,
+.modal-field select {
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        background: var(--deep-space);
+        color: var(--text-primary);
+        padding: 0.55rem 0.75rem;
+        font-size: 1rem;
+}
+
+.modal-grid {
+        display: grid;
+        gap: 0.75rem;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.modal-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+}
+
+.modal-checkbox input {
+        width: 18px;
+        height: 18px;
+}
+
+.modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+}
+
+.completion-error {
+        color: #f87171;
+        font-size: 0.9rem;
+        margin: 0;
 }
 
 .feedback-overlay {
@@ -2442,6 +2824,11 @@ function formatTime(s) {
                 padding: 1rem;
         }
 
+        .session-sidebar,
+        .session-main {
+                padding: 1.25rem;
+        }
+
         .pairing-controls {
                 flex-direction: column;
                 align-items: flex-start;
@@ -2466,10 +2853,6 @@ function formatTime(s) {
 
         .score-card {
                 padding: 1.25rem;
-        }
-
-        .station-info {
-                gap: 0.75rem;
         }
 }
 </style>
