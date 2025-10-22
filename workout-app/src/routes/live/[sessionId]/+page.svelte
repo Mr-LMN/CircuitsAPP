@@ -130,6 +130,7 @@ let cumulativeScores = workout.exercises.map((ex) => ({
 let pendingStations = new Set();
 let chipperFinisherName = '';
 let chipperFinisherCategory = DEFAULT_CATEGORY;
+let completedChipperSteps = new Set();
 
 const isAmrapType = String(workout?.type ?? '').toLowerCase() === 'amrap';
 const requiresCompletionLog = isChipperMode || isAmrapType;
@@ -160,6 +161,28 @@ let totalTime = 0;
 let showFeedbackModal = false;
 let feedbackRating = 0;
 let feedbackComment = '';
+
+function toggleChipperStepCompletion(order) {
+        const next = new Set(completedChipperSteps);
+        if (next.has(order)) {
+                next.delete(order);
+        } else {
+                next.add(order);
+        }
+        completedChipperSteps = next;
+}
+
+$: if (!isChipperMode && completedChipperSteps.size) {
+        completedChipperSteps = new Set();
+}
+
+$: if (isChipperMode) {
+        const availableOrders = new Set(chipperSteps.map((_, index) => index + 1));
+        const filteredOrders = [...completedChipperSteps].filter((order) => availableOrders.has(order));
+        if (filteredOrders.length !== completedChipperSteps.size) {
+                completedChipperSteps = new Set(filteredOrders);
+        }
+}
 
 onMount(() => {
         const userUid = $user?.uid;
@@ -812,20 +835,33 @@ async function saveFinalScores() {
                 });
 
                 const attendanceRef = doc(db, 'attendance', `${session.id}_${$user.uid}`);
-                const attendanceWrite = setDoc(
-                        attendanceRef,
-                        {
-                                userId: $user.uid,
-                                displayName: resolvedDisplayName,
-                                email: userProfile.email ?? '',
-                                sessionId: session.id,
-                                workoutId: workout.id,
-                                workoutTitle: workout.title,
-                                sessionDate: session.sessionDate ?? null,
-                                date: serverTimestamp()
-                        },
-                        { merge: true }
-                );
+                const buildAttendancePayload = () => ({
+                        userId: $user.uid,
+                        displayName: resolvedDisplayName,
+                        email: userProfile.email ?? '',
+                        sessionId: session.id,
+                        workoutId: workout.id,
+                        workoutTitle: workout.title,
+                        sessionDate: session.sessionDate ?? null,
+                        date: serverTimestamp()
+                });
+
+                const attendanceWrite = (async () => {
+                        try {
+                                await setDoc(attendanceRef, buildAttendancePayload(), { merge: true });
+                        } catch (primaryError) {
+                                console.warn('Primary attendance write failed, attempting fallback record.', primaryError);
+                                try {
+                                        await addDoc(collection(db, 'attendance'), {
+                                                ...buildAttendancePayload(),
+                                                sessionAttendanceId: `${session.id}_${$user.uid}`
+                                        });
+                                } catch (fallbackError) {
+                                        console.error('Fallback attendance write failed:', fallbackError);
+                                        throw fallbackError;
+                                }
+                        }
+                })();
 
                 const sessionRef = doc(db, 'sessions', session.id);
                 const sessionUpdate = updateDoc(sessionRef, {
@@ -1183,12 +1219,20 @@ function formatTime(s) {
                                                                         <div class="tier-reps">{typeof group.reps === 'number' ? `${group.reps}` : group.reps}</div>
                                                                         <ul class="tier-movements">
                                                                                 {#each group.items as item}
-                                                                                        <li>
-                                                                                                <span class="tier-order">#{item.order}</span>
-                                                                                                <span class="tier-name">{item.name}</span>
-                                                                                                {#if item.category}
-                                                                                                        <span class="tier-category">{item.category}</span>
-                                                                                                {/if}
+                                                                                        <li class:completed={completedChipperSteps.has(item.order)}>
+                                                                                                <label class="tier-item">
+                                                                                                        <span class="tier-order">#{item.order}</span>
+                                                                                                        <span class="tier-name">{item.name}</span>
+                                                                                                        {#if item.category}
+                                                                                                                <span class="tier-category">{item.category}</span>
+                                                                                                        {/if}
+                                                                                                        <input
+                                                                                                                type="checkbox"
+                                                                                                                class="tier-checkbox"
+                                                                                                                checked={completedChipperSteps.has(item.order)}
+                                                                                                                on:change={() => toggleChipperStepCompletion(item.order)}
+                                                                                                        />
+                                                                                                </label>
                                                                                         </li>
                                                                                 {/each}
                                                                         </ul>
@@ -1486,9 +1530,11 @@ function formatTime(s) {
                                         {/if}
                                 </section>
                         {:else if isChipperMode}
-                                <section class="score-card placeholder">
-                                        <h2>You're on the clock</h2>
-                                        <p>Move through the chipper list on the left. Tap <strong>End workout</strong> when the timer hits zero to log your finish.</p>
+                                <section class="score-card placeholder" aria-live="polite">
+                                        <div class="placeholder-clock">
+                                                <span class="clock-label">Time remaining</span>
+                                                <span class="clock-time">{formatTime(liveState.remaining)}</span>
+                                        </div>
                                 </section>
                         {:else}
                                 <section class="score-card placeholder">
@@ -2003,6 +2049,37 @@ function formatTime(s) {
         font-size: 0.95rem;
 }
 
+.tier-item {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        cursor: pointer;
+}
+
+.tier-checkbox {
+        margin-left: auto;
+        width: 1.05rem;
+        height: 1.05rem;
+        accent-color: var(--brand-yellow);
+        cursor: pointer;
+}
+
+.tier-movements li.completed .tier-name {
+        text-decoration: line-through;
+        color: var(--text-muted);
+}
+
+.tier-movements li.completed .tier-category {
+        opacity: 0.6;
+}
+
+.tier-movements li.completed .tier-order {
+        color: var(--text-muted);
+        opacity: 0.6;
+}
+
 .tier-order {
         font-weight: 600;
         color: var(--text-muted);
@@ -2194,6 +2271,27 @@ function formatTime(s) {
         border-style: dashed;
         box-shadow: none;
         min-height: 200px;
+}
+
+.placeholder-clock {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.35rem;
+}
+
+.clock-label {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-secondary);
+}
+
+.clock-time {
+        font-family: var(--font-display);
+        font-size: clamp(2.8rem, 3vw + 1rem, 3.6rem);
+        font-weight: 600;
+        color: var(--brand-yellow);
 }
 
 .score-card.placeholder h2 {
