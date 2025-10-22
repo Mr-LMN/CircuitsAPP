@@ -1186,8 +1186,8 @@ function formatTime(s) {
 
 
 <div class="tracker-container">
-        <div class="tracker-layout">
-                <aside class="session-sidebar">
+        <div class="tracker-layout" class:chipper={isChipperMode}>
+                {#if isChipperMode}
                         <section class="timer-card" aria-live="polite">
                                 <header class="timer-header">
                                         <span class="phase-label">{liveState.phase}</span>
@@ -1204,7 +1204,9 @@ function formatTime(s) {
                                         </div>
                                 {/if}
                         </section>
+                {/if}
 
+                <div class={isChipperMode ? 'chipper-content-grid' : 'standard-content-grid'}>
                         {#if isChipperMode}
                                 <section class="chipper-overview" aria-labelledby="chipper-title">
                                         <div class="chipper-header">
@@ -1253,83 +1255,103 @@ function formatTime(s) {
                                                 </div>
                                         {/if}
                                 </section>
-                        {:else if myStationData}
-                                <section class="station-overview" aria-labelledby="station-now-title">
-                                        <div class="station-heading">
-                                                <span class="station-eyebrow">Now</span>
-                                                <h2 id="station-now-title">{myStationData.name}</h2>
-                                                <p class="station-meta">
-                                                        Station {myCurrentStationIndex + 1}
-                                                        {#if stationCategory}
-                                                                <span aria-hidden="true">·</span>
-                                                                {stationCategory}
-                                                        {/if}
-                                                </p>
-                                        </div>
-                                        {#if workout.mode === 'Partner'}
-                                                {#if isTrainingSolo}
-                                                        {#if soloPrimaryTask}
-                                                                <p class="start-callout">
-                                                                        Training solo? Start on <strong>{soloPrimaryTask}</strong>
-                                                                        {#if soloSecondaryTask}
-                                                                                , then transition to <strong>{soloSecondaryTask}</strong>.
-                                                                        {:else}.
-                                                                        {/if}
-                                                                </p>
-                                                        {/if}
-                                                {:else if myPartnerSlot !== -1 && myActiveTaskLabel}
-                                                        <p class="start-callout">
-                                                                {#if myPartnerRole}<span class="start-role">{myPartnerRole}</span>{/if}
-                                                                Start on <strong>{myActiveTaskLabel}</strong>.
-                                                        </p>
-                                                {/if}
-                                        {/if}
-                                        {#if workout.mode === 'Partner' && upcomingTask && !isTrainingSolo && myPartnerSlot !== -1 && upcomingTask.name !== myActiveTaskLabel}
-                                                <p class="upcoming-note">Next interval: <strong>{upcomingTask.name}</strong></p>
-                                        {/if}
-                                        <div class="task-list">
-                                                <div class="task-line">
-                                                        <span class="task-label">Primary</span>
-                                                        <span class="task-name">{primaryTaskDetails.name}</span>
-                                                </div>
-                                                {#if secondaryTaskDetails.name && secondaryTaskDetails.name !== primaryTaskDetails.name}
-                                                        <div class="task-line">
-                                                                <span class="task-label secondary">Secondary</span>
-                                                                <span class="task-name">{secondaryTaskDetails.name}</span>
+                        {:else}
+                                <aside class="session-sidebar">
+                                        <section class="timer-card" aria-live="polite">
+                                                <header class="timer-header">
+                                                        <span class="phase-label">{liveState.phase}</span>
+                                                </header>
+                                                <div class="time-display">{formatTime(liveState.remaining)}</div>
+                                                {#if liveState.currentStationMeta?.category || intervalDuration}
+                                                        <div class="phase-meta">
+                                                                {#if liveState.currentStationMeta?.category}
+                                                                        <span class="phase-chip">{liveState.currentStationMeta.category}</span>
+                                                                {/if}
+                                                                {#if intervalDuration}
+                                                                        <span class="phase-chip">Interval: {Math.round(intervalDuration)}s</span>
+                                                                {/if}
                                                         </div>
                                                 {/if}
-                                        </div>
-                                        {#if myNextStationIndex !== -1}
-                                                <div class="station-next">
-                                                        <h3>Next</h3>
-                                                        <p>Station {myNextStationIndex + 1}</p>
-                                                        {#if nextStationCategory}
-                                                                <span class="station-chip">{nextStationCategory}</span>
+                                        </section>
+
+                                        {#if myStationData}
+                                                <section class="station-overview" aria-labelledby="station-now-title">
+                                                        <div class="station-heading">
+                                                                <span class="station-eyebrow">Now</span>
+                                                                <h2 id="station-now-title">{myStationData.name}</h2>
+                                                                <p class="station-meta">
+                                                                        Station {myCurrentStationIndex + 1}
+                                                                        {#if stationCategory}
+                                                                                <span aria-hidden="true">·</span>
+                                                                                {stationCategory}
+                                                                        {/if}
+                                                                </p>
+                                                        </div>
+                                                        {#if workout.mode === 'Partner'}
+                                                                {#if isTrainingSolo}
+                                                                        {#if soloPrimaryTask}
+                                                                                <p class="start-callout">
+                                                                                        Training solo? Start on <strong>{soloPrimaryTask}</strong>
+                                                                                        {#if soloSecondaryTask}
+                                                                                                , then transition to <strong>{soloSecondaryTask}</strong>.
+                                                                                        {:else}.
+                                                                                        {/if}
+                                                                                </p>
+                                                                        {/if}
+                                                                {:else if myPartnerSlot !== -1 && myActiveTaskLabel}
+                                                                        <p class="start-callout">
+                                                                                {#if myPartnerRole}<span class="start-role">{myPartnerRole}</span>{/if}
+                                                                                Start on <strong>{myActiveTaskLabel}</strong>.
+                                                                        </p>
+                                                                {/if}
                                                         {/if}
-                                                </div>
-                                        {/if}
-                                </section>
-                        {:else}
-                                <section class="workout-overview" aria-labelledby="workout-overview-title">
-                                        <h2 id="workout-overview-title">Workout flow</h2>
-                                        <ul>
-                                                {#each workout.exercises as exercise, index}
-                                                        <li>
-                                                                <span class="workout-index">{index + 1}</span>
-                                                                <div class="workout-info">
-                                                                        <strong>{exercise.name}</strong>
-                                                                        {#if exercise.description}
-                                                                                <span>{exercise.description}</span>
+                                                        {#if workout.mode === 'Partner' && upcomingTask && !isTrainingSolo && myPartnerSlot !== -1 && upcomingTask.name !== myActiveTaskLabel}
+                                                                <p class="upcoming-note">Next interval: <strong>{upcomingTask.name}</strong></p>
+                                                        {/if}
+                                                        <div class="task-list">
+                                                                <div class="task-line">
+                                                                        <span class="task-label">Primary</span>
+                                                                        <span class="task-name">{primaryTaskDetails.name}</span>
+                                                                </div>
+                                                                {#if secondaryTaskDetails.name && secondaryTaskDetails.name !== primaryTaskDetails.name}
+                                                                        <div class="task-line">
+                                                                                <span class="task-label secondary">Secondary</span>
+                                                                                <span class="task-name">{secondaryTaskDetails.name}</span>
+                                                                        </div>
+                                                                {/if}
+                                                        </div>
+                                                        {#if myNextStationIndex !== -1}
+                                                                <div class="station-next">
+                                                                        <h3>Next</h3>
+                                                                        <p>Station {myNextStationIndex + 1}</p>
+                                                                        {#if nextStationCategory}
+                                                                                <span class="station-chip">{nextStationCategory}</span>
                                                                         {/if}
                                                                 </div>
-                                                        </li>
-                                                {/each}
-                                        </ul>
-                                </section>
+                                                        {/if}
+                                                </section>
+                                        {:else}
+                                                <section class="workout-overview" aria-labelledby="workout-overview-title">
+                                                        <h2 id="workout-overview-title">Workout flow</h2>
+                                                        <ul>
+                                                                {#each workout.exercises as exercise, index}
+                                                                        <li>
+                                                                                <span class="workout-index">{index + 1}</span>
+                                                                                <div class="workout-info">
+                                                                                        <strong>{exercise.name}</strong>
+                                                                                        {#if exercise.description}
+                                                                                                <span>{exercise.description}</span>
+                                                                                        {/if}
+                                                                                </div>
+                                                                        </li>
+                                                                {/each}
+                                                        </ul>
+                                                </section>
+                                        {/if}
+                                </aside>
                         {/if}
-                </aside>
 
-                <main class="session-main">
+                        <main class="session-main">
                         {#if workout.mode === 'Partner' && showPairingControls}
                                 <section class="pairing-controls" aria-live="polite">
                                         <div class="pairing-copy">
@@ -1578,6 +1600,7 @@ function formatTime(s) {
                                 </section>
                         {/if}
                 </main>
+                </div>
         </div>
 
         {#if showCompletionModal}
@@ -1724,15 +1747,32 @@ function formatTime(s) {
 
 .tracker-layout {
         flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        height: auto;
+        min-height: 0;
+}
+
+.standard-content-grid {
+        flex: 1;
         display: grid;
         grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
         gap: 1rem;
-        height: 100%;
+        min-height: 0;
+}
+
+.chipper-content-grid {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+        gap: 1rem;
         min-height: 0;
 }
 
 .session-sidebar,
-.session-main {
+.session-main,
+.chipper-overview {
         background: var(--surface-1);
         border: 1px solid var(--border-color);
         border-radius: 20px;
@@ -1744,11 +1784,12 @@ function formatTime(s) {
         min-height: 0;
 }
 
-.session-sidebar {
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75));
-}
-
 .timer-card {
+        width: 100%;
+        background: var(--surface-1);
+        border: 1px solid var(--border-color);
+        border-radius: 20px;
+        padding: 1.5rem;
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
@@ -1777,13 +1818,14 @@ function formatTime(s) {
 }
 
 @media (max-width: 900px) {
-        .tracker-layout {
+        .standard-content-grid,
+        .chipper-content-grid {
                 grid-template-columns: 1fr;
-                grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
         }
 
         .session-sidebar,
-        .session-main {
+        .session-main,
+        .chipper-overview {
                 max-height: none;
         }
 }
@@ -1984,14 +2026,6 @@ function formatTime(s) {
 }
 
 .chipper-overview {
-        background: var(--surface-1);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-        display: flex;
-        flex-direction: column;
-        gap: 1.25rem;
         text-align: left;
 }
 
