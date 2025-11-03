@@ -881,11 +881,14 @@ async function saveFinalScores() {
                 });
 
                 const attendanceRef = doc(db, 'attendance', `${session.id}_${$user.uid}`);
+                const sessionAttendanceId = `${session.id}_${$user.uid}`;
+
                 const buildAttendancePayload = () => ({
                         userId: $user.uid,
                         displayName: resolvedDisplayName,
                         email: userProfile.email ?? '',
                         sessionId: session.id,
+                        sessionAttendanceId,
                         workoutId: workout.id,
                         workoutTitle: workout.title,
                         sessionDate: session.sessionDate ?? null,
@@ -899,8 +902,7 @@ async function saveFinalScores() {
                                 console.warn('Primary attendance write failed, attempting fallback record.', primaryError);
                                 try {
                                         await addDoc(collection(db, 'attendance'), {
-                                                ...buildAttendancePayload(),
-                                                sessionAttendanceId: `${session.id}_${$user.uid}`
+                                                ...buildAttendancePayload()
                                         });
                                 } catch (fallbackError) {
                                         console.error('Fallback attendance write failed:', fallbackError);
