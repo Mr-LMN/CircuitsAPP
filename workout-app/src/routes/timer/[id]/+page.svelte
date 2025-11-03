@@ -10,10 +10,28 @@ export let data;
 const { workout, sessionId } = data;
 const isPartnerMode = workout.mode === 'Partner';
 const isChipperMode = workout.mode === 'Chipper';
+const isEmomType = String(workout?.type ?? '').toLowerCase() === 'emom';
 
 const BASE_DEFAULT_TIMING = { work: 60, swap: 15, move: 15, rounds: 1 };
 const CHIPPER_DEFAULT_TIMING = { work: 20 * 60, swap: 0, move: 0, rounds: 1 };
 const DEFAULT_TIMING = isChipperMode ? CHIPPER_DEFAULT_TIMING : BASE_DEFAULT_TIMING;
+
+function normaliseEmomSettings(raw = {}) {
+        const every = Number(raw?.restEvery);
+        const duration = Number(raw?.restDuration);
+        const label = typeof raw?.restLabel === 'string' ? raw.restLabel.trim() : '';
+
+        const restEvery = Number.isFinite(every) && every > 0 ? Math.round(every) : 0;
+        const restDuration = Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 0;
+
+        return {
+                restEvery,
+                restDuration,
+                restLabel: label || 'Recovery Minute'
+        };
+}
+
+const emomSettings = normaliseEmomSettings(workout.emom);
 let chipperSteps = isChipperMode ? workout.chipper?.steps ?? [] : [];
 let chipperGroups = isChipperMode ? buildChipperGroups(chipperSteps) : [];
 let chipperFinisher = isChipperMode ? workout.chipper?.finisher ?? null : null;
@@ -66,8 +84,16 @@ function timingValue(key) {
         return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 let state = {
-phase: 'Ready', phaseIndex: -1, remaining: timingValue('work'), duration: timingValue('work'),
-currentStation: 0, currentRound: 1, isRunning: false, isComplete: false, lastCue: 0
+phase: 'Ready',
+phaseIndex: -1,
+remaining: timingValue('work'),
+duration: timingValue('work'),
+currentStation: 0,
+currentRound: 1,
+isRunning: false,
+isComplete: false,
+lastCue: 0,
+phaseType: 'idle'
 };
 
 $: if (isChipperMode) {
@@ -154,7 +180,19 @@ $: {
         const perStation = workout.mode === 'Partner'
                 ? workDuration * 2 + swapDuration + moveDuration
                 : workDuration + moveDuration;
-        totalTime = totalStations > 0 ? Math.round((perStation * totalStations * roundsCount) / 60) : 0;
+
+        let totalSeconds = totalStations > 0 ? perStation * totalStations * roundsCount : 0;
+
+        if (isEmomType && !isPartnerMode && totalStations > 0) {
+                const { restEvery, restDuration } = emomSettings;
+                if (restEvery > 0 && restDuration > 0) {
+                        const restPeriodsPerRound = Math.max(0, Math.floor((totalStations - 1) / restEvery));
+                        const restPerRound = restPeriodsPerRound * restDuration;
+                        totalSeconds = (perStation * totalStations + restPerRound) * roundsCount;
+                }
+        }
+
+        totalTime = totalStations > 0 ? Math.round(totalSeconds / 60) : 0;
 }
 $: startButtonLabel = state.isRunning ? 'Pause' : state.phaseIndex >= 0 && !state.isComplete ? 'Resume' : 'Start';
 
@@ -165,6 +203,7 @@ const currentStation = safeStationIndex >= 0 ? workout.exercises?.[safeStationIn
 return {
 phase: state.phase,
 phaseIndex: state.phaseIndex,
+phaseType: state.phaseType,
 remaining: Math.max(0, Math.round(state.remaining * 10) / 10),
 duration: Math.round(state.duration),
 isRunning: state.isRunning,
@@ -200,6 +239,84 @@ console.error('Failed to broadcast live state', error);
 });
 }
 
+function buildEmomPhaseLabel(index) {
+        const minuteNumber = index + 1;
+        return `Minute ${minuteNumber}`;
+}
+
+function handleEmomAdvance(workDuration) {
+        if (!isEmomType || isPartnerMode || isChipperMode || totalStations <= 0) {
+                return false;
+        }
+
+        const { restEvery, restDuration, restLabel } = emomSettings;
+
+        if (state.phaseIndex === -1 || state.phaseType === 'idle') {
+                state.phaseIndex = 0;
+                state.phaseType = 'work';
+                state.currentStation = 0;
+                state.phase = buildEmomPhaseLabel(0);
+                state.remaining = state.duration = workDuration;
+                state.currentRound = 1;
+                whistleBell();
+                return true;
+        }
+
+        const lastIndex = Math.max(0, Math.min(state.currentStation, totalStations - 1));
+        const isFinalStation = lastIndex >= totalStations - 1;
+
+        if (state.phaseType === 'work') {
+                const shouldRest =
+                        !isFinalStation &&
+                        restEvery > 0 &&
+                        restDuration > 0 &&
+                        ((lastIndex + 1) % restEvery === 0);
+
+                if (shouldRest) {
+                        state.phaseIndex += 1;
+                        state.phaseType = 'rest';
+                        state.phase = restLabel || 'Recovery';
+                        state.remaining = state.duration = restDuration;
+                        if (restDuration > 0) {
+                                tone(420, 160);
+                        }
+                        return true;
+                }
+
+                const nextIndex = lastIndex + 1;
+                if (nextIndex >= totalStations) {
+                        workoutComplete();
+                        return true;
+                }
+
+                state.phaseIndex += 1;
+                state.phaseType = 'work';
+                state.currentStation = nextIndex;
+                state.phase = buildEmomPhaseLabel(nextIndex);
+                state.remaining = state.duration = workDuration;
+                whistleBell();
+                return true;
+        }
+
+        if (state.phaseType === 'rest') {
+                const nextIndex = lastIndex + 1;
+                if (nextIndex >= totalStations) {
+                        workoutComplete();
+                        return true;
+                }
+
+                state.phaseIndex += 1;
+                state.phaseType = 'work';
+                state.currentStation = nextIndex;
+                state.phase = buildEmomPhaseLabel(nextIndex);
+                state.remaining = state.duration = workDuration;
+                whistleBell();
+                return true;
+        }
+
+        return false;
+}
+
 // --- Timer Core Functions ---
 function advancePhase() {
 if (state.isComplete || !totalStations) return;
@@ -222,6 +339,11 @@ workoutComplete();
 }
 broadcastLiveState(true);
 return;
+}
+
+if (handleEmomAdvance(workDuration)) {
+        broadcastLiveState(true);
+        return;
 }
 
 if (workout.mode === 'Partner') {
@@ -279,8 +401,8 @@ broadcastLiveState(true);
 function tick() { state.remaining -= 0.1; const secs = Math.ceil(state.remaining); if (secs <= 3 && secs >= 1 && secs !== state.lastCue) { state.lastCue = secs; countBeep(secs); } if (state.remaining <= 0) { advancePhase(); } state = state; broadcastLiveState(); }
 function startTimer() { if (state.isComplete || state.isRunning || totalStations === 0) return; if (state.phaseIndex === -1) { advancePhase(); } state.isRunning = true; timerId = setInterval(tick, 100); commitAllAssignments(); broadcastLiveState(true); }
 function pauseTimer() { if (!state.isRunning) return; state.isRunning = false; clearInterval(timerId); broadcastLiveState(true); }
-function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = timingValue('work'); state.duration = timingValue('work'); state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state = state; broadcastLiveState(true); }
-function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state = state; whistleBell(); broadcastLiveState(true); }
+function resetTimer() { pauseTimer(); state.phase = 'Ready'; state.phaseIndex = -1; state.remaining = timingValue('work'); state.duration = timingValue('work'); state.currentStation = 0; state.currentRound = 1; state.isComplete = false; state.phaseType = 'idle'; state = state; broadcastLiveState(true); }
+function workoutComplete() { pauseTimer(); state.phase = 'SESSION COMPLETE!'; state.isComplete = true; state.phaseType = 'complete'; state = state; whistleBell(); broadcastLiveState(true); }
 
 function openSetup() { pauseTimer(); isSetupVisible = true; }
 function closeSetup() { commitAllAssignments(); isSetupVisible = false; broadcastLiveState(true); }
