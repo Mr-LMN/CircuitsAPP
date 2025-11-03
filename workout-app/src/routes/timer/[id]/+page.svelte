@@ -250,6 +250,24 @@ function handleEmomAdvance(workDuration) {
         }
 
         const { restEvery, restDuration, restLabel } = emomSettings;
+        const roundsCount = Math.max(1, Math.round(Number(sessionConfig.rounds) || 1));
+
+        function startNextRound() {
+                const nextRound = state.currentRound + 1;
+                if (nextRound > roundsCount) {
+                        workoutComplete();
+                        return true;
+                }
+
+                state.currentRound = nextRound;
+                state.phaseIndex = 0;
+                state.phaseType = 'work';
+                state.currentStation = 0;
+                state.phase = buildEmomPhaseLabel(0);
+                state.remaining = state.duration = workDuration;
+                whistleBell();
+                return true;
+        }
 
         if (state.phaseIndex === -1 || state.phaseType === 'idle') {
                 state.phaseIndex = 0;
@@ -285,8 +303,7 @@ function handleEmomAdvance(workDuration) {
 
                 const nextIndex = lastIndex + 1;
                 if (nextIndex >= totalStations) {
-                        workoutComplete();
-                        return true;
+                        return startNextRound();
                 }
 
                 state.phaseIndex += 1;
@@ -301,8 +318,7 @@ function handleEmomAdvance(workDuration) {
         if (state.phaseType === 'rest') {
                 const nextIndex = lastIndex + 1;
                 if (nextIndex >= totalStations) {
-                        workoutComplete();
-                        return true;
+                        return startNextRound();
                 }
 
                 state.phaseIndex += 1;
@@ -390,8 +406,27 @@ state.remaining = state.duration = workDuration;
 whistleBell();
 }
 } else {
+if (state.phaseIndex === -1 || state.phaseType === 'idle') {
+state.phaseIndex = 0;
+state.phaseType = 'work';
+state.currentStation = 0;
+state.currentRound = 1;
+state.phase = 'Round 1';
+state.remaining = state.duration = workDuration;
+whistleBell();
+broadcastLiveState(true);
+return;
+}
+
 state.currentStation++;
-if (state.currentStation >= totalStations) { workoutComplete(); return; }
+if (state.currentStation >= totalStations) {
+state.currentStation = 0;
+state.currentRound++;
+if (state.currentRound > roundsCount) { workoutComplete(); return; }
+}
+
+state.phaseIndex = 0;
+state.phaseType = 'work';
 state.phase = `Round ${state.currentStation + 1}`;
 state.remaining = state.duration = workDuration;
 whistleBell();
