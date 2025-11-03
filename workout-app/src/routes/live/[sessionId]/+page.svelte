@@ -53,6 +53,10 @@ let secondaryTaskDetails = { name: '', category: DEFAULT_CATEGORY };
 let activeTask = { name: '', category: DEFAULT_CATEGORY };
 let upcomingTask = null;
 let metricCategory = DEFAULT_CATEGORY;
+let equipmentOptions = [];
+let selectedEquipment = '';
+let equipmentHistory = [];
+let isRestPhase = false;
 let hasSessionStarted = false;
 let showPairingControls = workout.mode === 'Partner';
 let nextStationCategory = '';
@@ -64,8 +68,8 @@ let partnerStatusText = '';
 let myScoreRef = null;
 let unsubscribe = [];
 
-const createEntryScore = () => ({ reps: '', weight: '', cals: '', dist: '', notes: '' });
-const createCumulativeScore = () => ({ reps: 0, weight: 0, cals: 0, dist: '', notes: '' });
+const createEntryScore = () => ({ reps: '', weight: '', cals: '', dist: '', notes: '', selection: '' });
+const createCumulativeScore = () => ({ reps: 0, weight: 0, cals: 0, dist: '', notes: '', selections: [] });
 
 function normaliseCategory(category, fallback = '') {
         const raw = String(category ?? '').trim();
@@ -247,7 +251,8 @@ function hasEntryValue(entry) {
         return (
                 ['reps', 'weight', 'cals'].some((key) => Number(entry[key]) > 0) ||
                 (entry.dist && entry.dist.trim().length > 0) ||
-                (entry.notes && entry.notes.trim().length > 0)
+                (entry.notes && entry.notes.trim().length > 0) ||
+                (entry.selection && String(entry.selection).trim().length > 0)
         );
 }
 
@@ -263,6 +268,27 @@ function handleEntryChange(index, field, rawValue) {
                 const numeric = Number(rawValue);
                 entry[field] = rawValue === '' ? '' : Math.max(0, Number.isFinite(numeric) ? numeric : 0);
         }
+
+        setEntryScore(index, entry);
+
+        if (hasEntryValue(entry)) {
+                pendingStations.add(index);
+        } else {
+                pendingStations.delete(index);
+        }
+        pendingStations = new Set(pendingStations);
+
+        if (lastSavedStationIndex === index && !hasEntryValue(entry)) {
+                lastSaveMessage = '';
+                lastSaveType = 'idle';
+        }
+}
+
+function handleSelectionChange(index, option) {
+        if (index < 0 || !currentEntries[index]) return;
+
+        const trimmed = typeof option === 'string' ? option.trim() : '';
+        const entry = { ...currentEntries[index].score, selection: trimmed };
 
         setEntryScore(index, entry);
 
@@ -296,6 +322,7 @@ async function commitStationScore(index, { auto = false } = {}) {
         }
 
         const cumulative = { ...cumulativeScores[index].score };
+        const selectionHistory = Array.isArray(cumulative.selections) ? [...cumulative.selections] : [];
         const numericFields = ['reps', 'weight', 'cals'];
         let hasUpdates = false;
 
@@ -317,6 +344,15 @@ async function commitStationScore(index, { auto = false } = {}) {
                 const trimmedNotes = entry.notes.trim();
                 cumulative.notes = cumulative.notes ? `${cumulative.notes}\n${trimmedNotes}` : trimmedNotes;
                 hasUpdates = true;
+        }
+
+        if (entry.selection && entry.selection.trim()) {
+                const trimmedSelection = entry.selection.trim();
+                selectionHistory.push(trimmedSelection);
+                cumulative.selections = selectionHistory;
+                hasUpdates = true;
+        } else {
+                cumulative.selections = selectionHistory;
         }
 
         if (!hasUpdates) {
@@ -364,6 +400,10 @@ async function updateLiveScore(scoreObject) {
 
         if (scoreObject.notes && String(scoreObject.notes).trim()) {
                 cleanedScore.notes = String(scoreObject.notes).trim();
+        }
+
+        if (Array.isArray(scoreObject.selections) && scoreObject.selections.length) {
+                cleanedScore.selections = scoreObject.selections;
         }
 
         try {
@@ -759,6 +799,9 @@ async function saveFinalScores() {
                         if (item.score.notes && String(item.score.notes).trim()) {
                                 cleaned.notes = String(item.score.notes).trim();
                         }
+                        if (Array.isArray(item.score.selections) && item.score.selections.length) {
+                                cleaned.selections = item.score.selections;
+                        }
 
                         if (!Object.keys(cleaned).length) {
                                 return null;
@@ -789,6 +832,9 @@ async function saveFinalScores() {
                         if (Number(entry.score.cals) > 0) cleaned.cals = Number(entry.score.cals);
                         if (entry.score.notes && String(entry.score.notes).trim()) {
                                 cleaned.notes = String(entry.score.notes).trim();
+                        }
+                        if (Array.isArray(entry.score.selections) && entry.score.selections.length) {
+                                cleaned.selections = entry.score.selections;
                         }
 
                         if (!Object.keys(cleaned).length) {
@@ -1087,6 +1133,32 @@ $: secondaryTaskDetails = myStationData
                   category: normaliseCategory(myStationData.p2?.category, primaryTaskDetails.category)
           }
         : { name: '', category: DEFAULT_CATEGORY };
+$: {
+        if (myStationData && Array.isArray(myStationData.equipment)) {
+                const cleaned = myStationData.equipment
+                        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+                        .filter((item) => item.length > 0);
+                equipmentOptions = Array.from(new Set(cleaned));
+        } else {
+                equipmentOptions = [];
+        }
+}
+$: selectedEquipment =
+        myCurrentStationIndex >= 0 && currentEntries[myCurrentStationIndex]
+                ? String(currentEntries[myCurrentStationIndex].score.selection || '')
+                : '';
+$: equipmentHistory =
+        myCurrentStationIndex >= 0 &&
+        Array.isArray(cumulativeScores[myCurrentStationIndex]?.score?.selections)
+                ? Array.from(
+                          new Set(
+                                  cumulativeScores[myCurrentStationIndex].score.selections
+                                          .map((item) => (typeof item === 'string' ? item.trim() : ''))
+                                          .filter(Boolean)
+                          )
+                  )
+                : [];
+$: isRestPhase = liveState?.phaseType === 'rest';
 $: if (workout.mode === 'Partner') {
         if (myPartnerSlot === 0) {
                 myPartnerRole = 'Partner A';
@@ -1287,6 +1359,15 @@ function formatTime(s) {
                                                                         {/if}
                                                                 </p>
                                                         </div>
+                                                        {#if isRestPhase && myStationData}
+                                                                <p class="rest-callout">
+                                                                        Recovery minute — log your score for <strong>{myStationData.name}</strong>
+                                                                        {#if nextStationData}
+                                                                                and prepare for <strong>{nextStationData.name}</strong>.
+                                                                        {:else}.
+                                                                        {/if}
+                                                                </p>
+                                                        {/if}
                                                         {#if workout.mode === 'Partner'}
                                                                 {#if isTrainingSolo}
                                                                         {#if soloPrimaryTask}
@@ -1320,6 +1401,12 @@ function formatTime(s) {
                                                                         </div>
                                                                 {/if}
                                                         </div>
+                                                        {#if equipmentOptions.length}
+                                                                <div class="equipment-options-list">
+                                                                        <span class="equipment-options-label">Options</span>
+                                                                        <span class="equipment-options-values">{equipmentOptions.join(' • ')}</span>
+                                                                </div>
+                                                        {/if}
                                                         {#if myNextStationIndex !== -1}
                                                                 <div class="station-next">
                                                                         <h3>Next</h3>
@@ -1436,6 +1523,12 @@ function formatTime(s) {
                                                 </div>
                                         </header>
 
+                                        {#if isRestPhase}
+                                                <div class="score-rest-banner" aria-live="polite">
+                                                        Recovery minute — log your score and take a breath before the next interval.
+                                                </div>
+                                        {/if}
+
                                         <p class="score-helper">
                                                 {#if isChipperMode}
                                                         Log the calories you rack up once you reach the finisher. Add a new entry each time you hop back on the machine.
@@ -1443,6 +1536,37 @@ function formatTime(s) {
                                                         Record the effort you hit for this interval. We'll add it to your running total automatically.
                                                 {/if}
                                         </p>
+
+                                        {#if equipmentOptions.length && myCurrentStationIndex >= 0}
+                                                <div class="score-equipment-selector">
+                                                        <div class="selector-header">
+                                                                <span class="selector-label">What did you use?</span>
+                                                                <button
+                                                                        type="button"
+                                                                        class="clear-selection"
+                                                                        on:click={() => handleSelectionChange(myCurrentStationIndex, '')}
+                                                                        disabled={!selectedEquipment}
+                                                                >
+                                                                        Clear
+                                                                </button>
+                                                        </div>
+                                                        <div class="selector-grid">
+                                                                {#each equipmentOptions as option (option)}
+                                                                        {@const isSelected = selectedEquipment === option}
+                                                                        <label class:active={isSelected}>
+                                                                                <input
+                                                                                        type="radio"
+                                                                                        name={`equipment-choice-${myCurrentStationIndex}`}
+                                                                                        value={option}
+                                                                                        checked={isSelected}
+                                                                                        on:change={() => handleSelectionChange(myCurrentStationIndex, option)}
+                                                                                />
+                                                                                <span>{option}</span>
+                                                                        </label>
+                                                                {/each}
+                                                        </div>
+                                                </div>
+                                        {/if}
 
                                         <div class="input-grid" class:two-column={metricCategory === 'Resistance' || metricCategory === 'Cardio Machine'}>
                                                 {#if metricCategory === 'Resistance'}
@@ -1543,6 +1667,9 @@ function formatTime(s) {
                                                                 {/if}
                                                                 {#if cumulativeScores[myCurrentStationIndex].score.dist && cumulativeScores[myCurrentStationIndex].score.dist.trim()}
                                                                         <li><span>Distance</span><span>{cumulativeScores[myCurrentStationIndex].score.dist}</span></li>
+                                                                {/if}
+                                                                {#if equipmentHistory.length}
+                                                                        <li><span>Equipment</span><span>{equipmentHistory.join(', ')}</span></li>
                                                                 {/if}
                                                                 {#if cumulativeScores[myCurrentStationIndex].score.notes && cumulativeScores[myCurrentStationIndex].score.notes.trim()}
                                                                         <li class="notes-total"><span>Notes</span><span>{cumulativeScores[myCurrentStationIndex].score.notes}</span></li>
@@ -1916,6 +2043,25 @@ function formatTime(s) {
 .workout-info span {
         font-size: 0.8rem;
         color: var(--text-muted);
+}
+
+.equipment-options-list {
+        margin-top: 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+}
+
+.equipment-options-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+}
+
+.equipment-options-values {
+        font-size: 0.9rem;
+        color: var(--text-secondary);
 }
 
 .station-next {
@@ -2297,6 +2443,80 @@ function formatTime(s) {
         gap: 1.25rem;
 }
 
+.score-rest-banner {
+        background: rgba(148, 163, 184, 0.14);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 14px;
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+}
+
+.score-equipment-selector {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+}
+
+.selector-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+}
+
+.selector-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+}
+
+.clear-selection {
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        cursor: pointer;
+        padding: 0.15rem 0.35rem;
+}
+
+.clear-selection:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+}
+
+.selector-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+}
+
+.selector-grid label {
+        border: 1px solid var(--border-color);
+        border-radius: 999px;
+        padding: 0.4rem 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        cursor: pointer;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.selector-grid label.active {
+        background: var(--brand-yellow);
+        border-color: var(--brand-yellow);
+        color: var(--bg-main);
+}
+
+.selector-grid label input {
+        display: none;
+}
+
 .score-card.placeholder {
         align-items: center;
         justify-content: center;
@@ -2578,6 +2798,19 @@ function formatTime(s) {
 }
 .start-callout strong {
         color: var(--brand-yellow);
+}
+.rest-callout {
+        margin: 0.75rem 0;
+        padding: 0.85rem 1rem;
+        border-radius: 12px;
+        background: rgba(148, 163, 184, 0.12);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        color: var(--text-secondary);
+        font-size: 0.95rem;
+        line-height: 1.5;
+}
+.rest-callout strong {
+        color: var(--text-primary);
 }
 .start-role {
         display: inline-block;

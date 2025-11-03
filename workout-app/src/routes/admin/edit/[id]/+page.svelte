@@ -19,14 +19,14 @@
   let notes = data.workout.notes ?? '';
 
   function getDefaultIndividualExercise() {
-    return { name: '', description: '', category: DEFAULT_CATEGORY };
+    return { name: '', description: '', category: DEFAULT_CATEGORY, equipment: [], equipmentInput: '' };
   }
 
   function getDefaultPartnerStation(index = 0) {
     return {
       name: `Station ${index + 1}`,
-      p1: { task: '', category: DEFAULT_CATEGORY },
-      p2: { task: '', category: DEFAULT_CATEGORY },
+      p1: { task: '', category: DEFAULT_CATEGORY, equipment: [], equipmentInput: '' },
+      p2: { task: '', category: DEFAULT_CATEGORY, equipment: [], equipmentInput: '' },
       startsOn: 'P1'
     };
   }
@@ -61,6 +61,90 @@
     return CATEGORY_OPTIONS.includes(category) ? category : DEFAULT_CATEGORY;
   }
 
+  function normalizeEquipmentList(value) {
+    if (Array.isArray(value)) {
+      return value
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    return [];
+  }
+
+  function sanitizeEquipmentInput(exercise = {}) {
+    const list = normalizeEquipmentList(
+      typeof exercise.equipmentInput === 'string' ? exercise.equipmentInput : exercise.equipment
+    );
+
+    return {
+      ...exercise,
+      equipment: list,
+      equipmentInput: list.join(', ')
+    };
+  }
+
+  function sanitizePartnerEquipmentInput(station = {}) {
+    const p1Equipment = normalizeEquipmentList(
+      typeof station?.p1?.equipmentInput === 'string' ? station.p1.equipmentInput : station?.p1?.equipment
+    );
+    const p2Equipment = normalizeEquipmentList(
+      typeof station?.p2?.equipmentInput === 'string' ? station.p2.equipmentInput : station?.p2?.equipment
+    );
+
+    return {
+      ...station,
+      p1: {
+        ...station.p1,
+        equipment: p1Equipment,
+        equipmentInput: p1Equipment.join(', ')
+      },
+      p2: {
+        ...station.p2,
+        equipment: p2Equipment,
+        equipmentInput: p2Equipment.join(', ')
+      }
+    };
+  }
+
+  const DEFAULT_EMOM_SETTINGS = {
+    restEvery: '',
+    restDuration: '',
+    restLabel: 'Recovery Minute'
+  };
+
+  let emomSettings = {
+    restEvery: data.workout?.emom?.restEvery ?? DEFAULT_EMOM_SETTINGS.restEvery,
+    restDuration: data.workout?.emom?.restDuration ?? DEFAULT_EMOM_SETTINGS.restDuration,
+    restLabel: data.workout?.emom?.restLabel ?? DEFAULT_EMOM_SETTINGS.restLabel
+  };
+
+  function sanitizeEmomSettings(settings = {}) {
+    const every = Number(settings.restEvery);
+    const duration = Number(settings.restDuration);
+    const label = typeof settings.restLabel === 'string' ? settings.restLabel.trim() : '';
+
+    const restEvery = Number.isFinite(every) && every > 0 ? Math.round(every) : 0;
+    const restDuration = Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 0;
+
+    if (!restEvery || !restDuration) {
+      return null;
+    }
+
+    return {
+      restEvery,
+      restDuration,
+      restLabel: label || 'Recovery Minute'
+    };
+  }
+
   function normalizeStartsOn(value) {
     return value === 'P2' ? 'P2' : 'P1';
   }
@@ -72,20 +156,28 @@
         task: exercise?.p1?.task ?? exercise?.p1_task ?? exercise?.description ?? '',
         category: sanitizeCategory(
           exercise?.p1?.category ?? exercise?.p1_category ?? exercise?.category
-        )
+        ),
+        equipment: normalizeEquipmentList(exercise?.p1?.equipment ?? exercise?.p1_equipment),
+        equipmentInput: normalizeEquipmentList(
+          exercise?.p1?.equipment ?? exercise?.p1_equipment
+        ).join(', ')
       },
       p2: {
         task: exercise?.p2?.task ?? exercise?.p2_task ?? '',
         category: sanitizeCategory(
           exercise?.p2?.category ?? exercise?.p2_category ?? exercise?.category
-        )
+        ),
+        equipment: normalizeEquipmentList(exercise?.p2?.equipment ?? exercise?.p2_equipment),
+        equipmentInput: normalizeEquipmentList(
+          exercise?.p2?.equipment ?? exercise?.p2_equipment
+        ).join(', ')
       },
       startsOn: normalizeStartsOn(exercise?.startsOn ?? exercise?.startsWith ?? exercise?.starter)
     };
   }
 
   function toIndividualExercise(exercise) {
-    return {
+    const base = {
       name: exercise?.name ?? '',
       description:
         exercise?.description ??
@@ -96,8 +188,12 @@
         '',
       category: sanitizeCategory(
         exercise?.category ?? exercise?.p1?.category ?? exercise?.p1_category
-      )
+      ),
+      equipment: normalizeEquipmentList(exercise?.equipment),
+      equipmentInput: normalizeEquipmentList(exercise?.equipment).join(', ')
     };
+
+    return sanitizeEquipmentInput(base);
   }
 
   function toChipperStep(exercise, index = 0) {
@@ -121,13 +217,15 @@
 
   function initializeExercises(initialExercises = []) {
     if (!Array.isArray(initialExercises) || initialExercises.length === 0) {
-      if (mode === 'Partner') return [getDefaultPartnerStation()];
+      if (mode === 'Partner') return [sanitizePartnerEquipmentInput(getDefaultPartnerStation())];
       if (mode === 'Chipper') return getDefaultChipperSteps();
-      return [getDefaultIndividualExercise()];
+      return [sanitizeEquipmentInput(getDefaultIndividualExercise())];
     }
 
     if (mode === 'Partner') {
-      return initialExercises.map((exercise, index) => toPartnerExercise(exercise, index));
+      return initialExercises.map((exercise, index) =>
+        sanitizePartnerEquipmentInput(toPartnerExercise(exercise, index))
+      );
     }
 
     if (mode === 'Chipper') {
@@ -135,7 +233,7 @@
       return steps.map((exercise, index) => sanitizeChipperStep(toChipperStep(exercise, index), index));
     }
 
-    return initialExercises.map((exercise) => toIndividualExercise(exercise));
+    return initialExercises.map((exercise) => sanitizeEquipmentInput(toIndividualExercise(exercise)));
   }
 
   let exercises = initializeExercises(data.workout.exercises ?? []);
@@ -155,14 +253,21 @@
   // Reactive statement to automatically reset the exercises when the mode changes
   $: if (mode !== previousMode) {
     if (mode === 'Partner') {
-      exercises = [getDefaultPartnerStation()];
+      exercises = [sanitizePartnerEquipmentInput(getDefaultPartnerStation())];
     } else if (mode === 'Chipper') {
       exercises = getDefaultChipperSteps();
       chipperFinisher = sanitizeFinisher(chipperFinisher);
     } else {
-      exercises = [getDefaultIndividualExercise()];
+      exercises = [sanitizeEquipmentInput(getDefaultIndividualExercise())];
     }
     previousMode = mode;
+  }
+
+  $: if (
+    type !== 'EMOM' &&
+    (emomSettings.restEvery || emomSettings.restDuration || emomSettings.restLabel !== DEFAULT_EMOM_SETTINGS.restLabel)
+  ) {
+    emomSettings = { ...DEFAULT_EMOM_SETTINGS };
   }
 
   onMount(async () => {
@@ -186,14 +291,14 @@
 
   function addExercise() {
     if (mode === 'Partner') {
-      exercises = [...exercises, getDefaultPartnerStation(exercises.length)];
+      exercises = [...exercises, sanitizePartnerEquipmentInput(getDefaultPartnerStation(exercises.length))];
     } else if (mode === 'Chipper') {
       exercises = [
         ...exercises,
         sanitizeChipperStep(createDefaultChipperStep(exercises.length, DEFAULT_CATEGORY), exercises.length)
       ];
     } else {
-      exercises = [...exercises, getDefaultIndividualExercise()];
+      exercises = [...exercises, sanitizeEquipmentInput(getDefaultIndividualExercise())];
     }
   }
 
@@ -242,11 +347,21 @@
           name: exercise.name?.trim?.() || `Station ${index + 1}`,
           p1: {
             task: exercise.p1?.task?.trim?.() ?? '',
-            category: sanitizeCategory(exercise.p1?.category)
+            category: sanitizeCategory(exercise.p1?.category),
+            equipment: normalizeEquipmentList(
+              typeof exercise.p1?.equipmentInput === 'string'
+                ? exercise.p1.equipmentInput
+                : exercise.p1?.equipment
+            )
           },
           p2: {
             task: exercise.p2?.task?.trim?.() ?? '',
-            category: sanitizeCategory(exercise.p2?.category)
+            category: sanitizeCategory(exercise.p2?.category),
+            equipment: normalizeEquipmentList(
+              typeof exercise.p2?.equipmentInput === 'string'
+                ? exercise.p2.equipmentInput
+                : exercise.p2?.equipment
+            )
           },
           startsOn: normalizeStartsOn(exercise.startsOn)
         }));
@@ -268,12 +383,18 @@
           }
         ];
       } else {
-        normalizedExercises = exercises.map((exercise) => ({
-          name: exercise.name?.trim?.() ?? '',
-          description: exercise.description?.trim?.() ?? '',
-          category: sanitizeCategory(exercise.category)
-        }));
+        normalizedExercises = exercises.map((exercise) => {
+          const entry = sanitizeEquipmentInput(exercise);
+          return {
+            name: entry.name?.trim?.() ?? '',
+            description: entry.description?.trim?.() ?? '',
+            category: sanitizeCategory(entry.category),
+            equipment: entry.equipment
+          };
+        });
       }
+
+      const emomPayload = type === 'EMOM' ? sanitizeEmomSettings(emomSettings) : null;
 
       const workoutRef = doc(db, 'workouts', data.workout.id);
       const updatedData = {
@@ -283,7 +404,8 @@
         isBenchmark,
         notes: notes?.trim?.() ?? '',
         exercises: normalizedExercises,
-        chipper: chipperPayload
+        chipper: chipperPayload,
+        emom: emomPayload
       };
 
       await updateDoc(workoutRef, updatedData);
@@ -351,6 +473,53 @@
       <label for="notes">Notes / Instructions</label>
       <textarea id="notes" bind:value={notes} rows="3"></textarea>
     </div>
+
+    {#if type === 'EMOM'}
+      <section class="emom-settings">
+        <header>
+          <h2>EMOM Recovery Blocks</h2>
+          <p class="input-hint">
+            Set the cadence for automatic recovery minutes between work intervals. Leave values blank to skip.
+          </p>
+        </header>
+        <div class="emom-grid">
+          <div class="form-group">
+            <label for="emom-rest-every">Rest every (minutes)</label>
+            <input
+              id="emom-rest-every"
+              type="number"
+              min="0"
+              inputmode="numeric"
+              bind:value={emomSettings.restEvery}
+              placeholder="e.g. 5"
+            />
+          </div>
+          <div class="form-group">
+            <label for="emom-rest-duration">Recovery duration (seconds)</label>
+            <input
+              id="emom-rest-duration"
+              type="number"
+              min="0"
+              inputmode="numeric"
+              bind:value={emomSettings.restDuration}
+              placeholder="e.g. 60"
+            />
+          </div>
+          <div class="form-group">
+            <label for="emom-rest-label">Recovery label</label>
+            <input
+              id="emom-rest-label"
+              type="text"
+              bind:value={emomSettings.restLabel}
+              placeholder="Recovery Minute"
+            />
+          </div>
+        </div>
+        <p class="input-hint subtle">
+          The live timer will insert this recovery block automatically without changing other workout types.
+        </p>
+      </section>
+    {/if}
 
     <div class="form-group-checkbox">
       <input id="benchmark" type="checkbox" bind:checked={isBenchmark} />
@@ -529,6 +698,17 @@
               bind:value={exercise.description}
               placeholder="Description (e.g., 12 reps, 45s)"
             />
+            {#if type === 'EMOM' && ['Cardio Machine', 'Bodyweight'].includes(exercise.category)}
+              <input
+                type="text"
+                class="equipment-input"
+                bind:value={exercise.equipmentInput}
+                placeholder="Equipment options (comma separated)"
+              />
+              <p class="input-hint equipment-hint">
+                Members can tick the machine or variation they completed for this minute.
+              </p>
+            {/if}
             <button type="button" class="remove-btn" on:click={() => removeExercise(i)}>&times;</button>
           </div>
         {/each}
@@ -586,6 +766,41 @@
     display: flex;
     gap: 1rem;
     flex-wrap: wrap;
+  }
+
+  .emom-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: var(--deep-space);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+  }
+
+  .emom-settings h2 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .emom-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+  }
+
+  .input-hint.subtle {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
+  .equipment-input {
+    margin-top: 0.5rem;
+  }
+
+  .equipment-hint {
+    margin-top: -0.35rem;
+    font-size: 0.8rem;
   }
 
   .split-group > .form-group {
