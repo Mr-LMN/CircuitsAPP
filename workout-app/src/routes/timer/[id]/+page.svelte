@@ -890,4 +890,36 @@ console.error('Failed to initialise live state', error);
 
 @media (max-width: 1200px) { .main-content { grid-template-columns: minmax(0, 1fr); } .session-highlights { flex-wrap: wrap; } }
 @media (max-width: 900px) { .mission-control { padding: 1rem; } .left-panel { max-height: 50vh; } .setup-panel { flex-direction: column; gap: 1.25rem; align-items: stretch; } .header-actions { width: 100%; justify-content: flex-end; } .session-highlights { width: 100%; justify-content: flex-start; flex-wrap: wrap; } }
+@media (max-width: 720px) {
+  .mission-control { gap: 1rem; padding: 0.85rem; }
+  .setup-panel { padding: 1.1rem 1.2rem; border-radius: 1rem; gap: 1rem; }
+  .session-highlights { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
+  .highlight { min-width: unset; padding: 0.65rem 0.75rem; }
+  .header-actions { width: 100%; gap: 0.6rem; justify-content: flex-start; }
+  .header-actions .ghost { flex: 1 1 auto; text-align: center; }
+  .main-content { display: flex; flex-direction: column; gap: 1rem; }
+  .right-panel { order: -1; padding: 1.5rem 1.25rem; border-radius: 1rem; align-items: flex-start; text-align: left; }
+  .timer-main { align-items: flex-start; }
+  .phase-display { font-size: clamp(2.25rem, 9vw, 3.25rem); letter-spacing: clamp(0.08em, 1.6vw, 0.18em); }
+  .time-display { font-size: clamp(4.5rem, 18vw, 6.5rem); margin: 0.4rem 0 0.85rem; }
+  .meta-info { flex-direction: column; align-items: flex-start; gap: 0.35rem; font-size: 0.85rem; letter-spacing: 0.08em; text-align: left; }
+  .control-row { width: 100%; justify-content: flex-start; gap: 0.65rem; }
+  .control-row button { flex: 1 1 auto; min-width: 0; font-size: 0.95rem; padding: 0.65rem 0.85rem; }
+  .control-row button.finish { order: 3; }
+  .left-panel { padding: 1rem; max-height: none; }
+  .station-grid { display: flex; overflow-x: auto; gap: 0.75rem; padding-bottom: 0.75rem; margin: 0 -0.5rem; padding-inline: 0.5rem; scroll-snap-type: x mandatory; }
+  .station-grid::-webkit-scrollbar { display: none; }
+  .station-grid > * { scroll-snap-align: start; }
+  .station-card { min-width: calc(100% - 1rem); padding: 0.9rem 1rem; border-radius: 14px; }
+  .station-card__header { align-items: flex-start; gap: 0.6rem; }
+  .station-number { width: 28px; height: 28px; font-size: 0.85rem; }
+  .station-card h3 { font-size: 1rem; }
+  .station-card__tasks { gap: 0.5rem; }
+  .task-line { font-size: 0.85rem; }
+  .task-description { font-size: 0.85rem; }
+  .task-chip { font-size: 0.65rem; }
+  .station-card__roster { border-top: none; padding-top: 0; margin-top: 0.35rem; }
+  .roster-chips { gap: 0.3rem; }
+  .roster-chips span { font-size: 0.7rem; }
+}
 </style>
