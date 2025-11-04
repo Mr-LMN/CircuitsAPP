@@ -883,17 +883,25 @@ async function saveFinalScores() {
                 const attendanceRef = doc(db, 'attendance', `${session.id}_${$user.uid}`);
                 const sessionAttendanceId = `${session.id}_${$user.uid}`;
 
-                const buildAttendancePayload = () => ({
-                        userId: $user.uid,
-                        displayName: resolvedDisplayName,
-                        email: userProfile.email ?? '',
-                        sessionId: session.id,
-                        sessionAttendanceId,
-                        workoutId: workout.id,
-                        workoutTitle: workout.title,
-                        sessionDate: session.sessionDate ?? null,
-                        date: serverTimestamp()
-                });
+                const buildAttendancePayload = () => {
+                        const payload = {
+                                userId: $user.uid,
+                                displayName: resolvedDisplayName,
+                                email: userProfile.email ?? '',
+                                sessionId: session.id,
+                                sessionAttendanceId,
+                                workoutId: workout.id,
+                                workoutTitle: workout.title,
+                                sessionDate: session.sessionDate ?? null,
+                                date: serverTimestamp()
+                        };
+
+                        if (session?.creatorId) {
+                                payload.creatorId = session.creatorId;
+                        }
+
+                        return payload;
+                };
 
                 const attendanceWrite = (async () => {
                         try {
