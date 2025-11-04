@@ -1,9 +1,11 @@
 <script>
 // @ts-nocheck
+import { get } from 'svelte/store';
 import { onMount } from 'svelte';
 import { db } from '$lib/firebase';
 import { collection, getDocs, addDoc, serverTimestamp, query, where, Timestamp } from 'firebase/firestore';
 import { SvelteSet } from 'svelte/reactivity';
+import { user } from '$lib/store';
 
 let profiles = [];
 let todaysAttendees = new SvelteSet(); // A Set for quick lookups of who has attended today
@@ -50,12 +52,19 @@ try {
 profile.isCheckingIn = true;
 profiles = profiles;
 
-await addDoc(collection(db, 'attendance'), {
-userId: profile.id,
-displayName: profile.displayName,
-email: profile.email,
-date: serverTimestamp() // Use server's timestamp for accuracy
-});
+    const currentUser = get(user);
+    const payload = {
+        userId: profile.id,
+        displayName: profile.displayName,
+        email: profile.email,
+        date: serverTimestamp() // Use server's timestamp for accuracy
+    };
+
+    if (currentUser?.uid) {
+        payload.creatorId = currentUser.uid;
+    }
+
+    await addDoc(collection(db, 'attendance'), payload);
 
 // Update the UI instantly without needing to refresh the page
 todaysAttendees.add(profile.id);

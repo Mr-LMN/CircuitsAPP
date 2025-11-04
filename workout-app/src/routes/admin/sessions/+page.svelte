@@ -36,7 +36,7 @@ const d = new Date(date);
 return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
-async function fetchAttendanceForSessions(sessionIds) {
+async function fetchAttendanceForSessions(sessionIds, creatorId) {
   const attendanceMap = new Map();
 
   if (!sessionIds.length) {
@@ -46,7 +46,13 @@ async function fetchAttendanceForSessions(sessionIds) {
   try {
     const attendanceSnapshots = await Promise.all(
       sessionIds.map((id) =>
-        getDocs(query(collection(db, 'attendance'), where('sessionId', '==', id)))
+        getDocs(
+          query(
+            collection(db, 'attendance'),
+            ...(creatorId ? [where('creatorId', '==', creatorId)] : []),
+            where('sessionId', '==', id)
+          )
+        )
       )
     );
 
@@ -96,7 +102,7 @@ async function watchSessions(uid) {
       const currentToken = ++sessionUpdateToken;
 
       void (async () => {
-        const attendanceMap = await fetchAttendanceForSessions(sessionIds);
+        const attendanceMap = await fetchAttendanceForSessions(sessionIds, uid);
 
         if (currentToken !== sessionUpdateToken) {
           return;

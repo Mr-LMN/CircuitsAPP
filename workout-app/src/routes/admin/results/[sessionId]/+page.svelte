@@ -76,14 +76,28 @@ onMount(async () => {
                         attendance: []
                 };
 
-                const [attendanceSnapshot, scoresSnapshot, subcollectionFeedbackSnapshot, fallbackFeedbackSnapshot] = await Promise.all([
-                        getDocs(query(collection(db, 'attendance'), where('sessionId', '==', sessionId))),
+                let attendanceSnapshot = null;
+
+                try {
+                        const attendanceConstraints = [where('sessionId', '==', sessionId)];
+                        if (sessionData.creatorId) {
+                                attendanceConstraints.push(where('creatorId', '==', sessionData.creatorId));
+                        }
+
+                        attendanceSnapshot = await getDocs(query(collection(db, 'attendance'), ...attendanceConstraints));
+                } catch (attendanceError) {
+                        console.error('Failed to load attendance records for session', attendanceError);
+                }
+
+                const [scoresSnapshot, subcollectionFeedbackSnapshot, fallbackFeedbackSnapshot] = await Promise.all([
                         getDocs(query(collection(db, 'scores'), where('sessionId', '==', sessionId))),
                         getDocs(collection(db, 'sessions', sessionId, 'feedback')),
                         getDocs(query(collection(db, 'sessionFeedback'), where('sessionId', '==', sessionId)))
                 ]);
 
-                session.attendance = attendanceSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+                session.attendance = attendanceSnapshot
+                        ? attendanceSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+                        : [];
                 scoreEntries = scoresSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
 
                 const combinedFeedback = [
