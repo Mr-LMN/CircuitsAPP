@@ -167,24 +167,134 @@
 
 <style>
   /* ... (all previous styles for this page) ... */
-  .page-container { width: 100%; max-width: 800px; margin: 2rem auto; padding: 2rem; }
-  .page-header { margin-bottom: 2rem; }
-  h1 { font-family: var(--font-display); color: var(--brand-yellow); font-size: 3rem; margin: 0; }
-  .card { background: var(--surface-1); border: 1px solid var(--border-color); border-radius: 16px; padding: 2rem; }
-  .form-group, fieldset { margin-bottom: 2rem; }
-  label { display: block; margin-bottom: 0.5rem; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; }
-  select, input { width: 100%; font-size: 1rem; padding: 0.75rem 1rem; border-radius: 12px; border: 1px solid var(--border-color); background: var(--deep-space); color: var(--text-primary); }
-  fieldset { border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem; }
-  legend { padding: 0 0.5rem; font-weight: 600; color: var(--text-secondary); }
-  .fieldset-hint { margin: 0.75rem 0 1.25rem; color: var(--text-muted); font-size: 0.9rem; }
-  .score-entry { display: grid; grid-template-columns: 1fr; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
-  .score-entry:last-child { margin-bottom: 0; }
-  .score-entry label { margin-bottom: 0; grid-column: 1 / -1; } /* Label on its own row */
-  .primary-btn { border: none; background: var(--brand-green); color: var(--text-primary); padding: 1rem; border-radius: 12px; font-weight: 600; cursor: pointer; width: 100%; font-size: 1.1rem; }
-  .secondary-btn { display: block; text-align: center; margin-top: 1rem; color: var(--text-muted); }
-  .success-message, .error-message { text-align: center; margin-bottom: 1rem; padding: 0.75rem; border-radius: 8px; }
-  .success-message { color: var(--brand-green); background-color: rgba(22, 163, 74, 0.1); }
-  .error-message { color: #ef4444; background-color: rgba(239, 68, 68, 0.1); }
+  .page-container {
+    width: min(960px, 100%);
+    margin: clamp(1rem, 3vw, 2.5rem) auto;
+    padding: clamp(1rem, 3vw, 2rem);
+  }
+
+  .page-header {
+    margin-bottom: 2rem;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    color: var(--brand-yellow);
+    font-size: 3rem;
+    margin: 0;
+  }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: clamp(1.25rem, 3vw, 2rem);
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .form-group,
+  fieldset {
+    margin-bottom: 0.5rem;
+  }
+
+  label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  select,
+  input {
+    width: 100%;
+    font-size: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--deep-space);
+    color: var(--text-primary);
+  }
+
+  fieldset {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  legend {
+    padding: 0 0.5rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .fieldset-hint {
+    margin: 0.75rem 0 1.25rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .score-entry {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .score-entry:last-child {
+    margin-bottom: 0;
+  }
+
+  .score-entry label {
+    margin-bottom: 0;
+    grid-column: 1 / -1;
+  } /* Label on its own row */
+
+  .primary-btn {
+    border: none;
+    background: var(--brand-green);
+    color: var(--text-primary);
+    padding: 1rem;
+    border-radius: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    font-size: 1.1rem;
+  }
+
+  .secondary-btn {
+    display: block;
+    text-align: center;
+    margin-top: 0.5rem;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+  }
+
+  .success-message,
+  .error-message {
+    text-align: center;
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    border-radius: 8px;
+  }
+
+  .success-message {
+    color: var(--brand-green);
+    background-color: rgba(22, 163, 74, 0.1);
+  }
+
+  .error-message {
+    color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.1);
+  }
 
   /* --- NEW: Styles for input groups --- */
   .input-group {
@@ -192,14 +302,39 @@
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem;
   }
+
   .metric-hint {
     grid-column: 1 / -1;
     font-size: 0.8rem;
     color: var(--text-muted);
     margin-top: -0.25rem;
   }
+
   /* Make single inputs span both columns */
   .input-group input:only-child {
     grid-column: 1 / -1;
+  }
+
+  @media (max-width: 640px) {
+    .page-container {
+      padding: 1rem;
+      margin: 1rem auto;
+    }
+
+    h1 {
+      font-size: 2.25rem;
+    }
+
+    .card {
+      padding: 1.25rem;
+    }
+
+    .input-group {
+      grid-template-columns: 1fr;
+    }
+
+    .secondary-btn {
+      width: 100%;
+    }
   }
 </style>

@@ -372,13 +372,52 @@ function handleAmrapSelectChange(event) {
 
 <style>
 /* NEW Professional Dashboard Styles */
-.page-container { max-width: 1400px; }
-.dashboard-header h1 { font-family: var(--font-display); color: var(--brand-yellow); font-size: 3rem; margin: 0; }
-.dashboard-header p { font-size: 1.1rem; color: var(--text-secondary); margin-top: 0.5rem; }
-.dashboard-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; margin-top: 2rem; }
-.main-col, .sidebar-col { display: flex; flex-direction: column; gap: 2rem; }
-.dashboard-section h2 { font-family: var(--font-display); font-size: 1.75rem; letter-spacing: 1px; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); }
-.session-card { background: var(--surface-1); border: 1px solid var(--border-color); border-radius: 16px; padding: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+.page-container {
+        width: min(1400px, 100%);
+        margin: 0 auto;
+        padding: clamp(1rem, 4vw, 2rem);
+}
+.dashboard-header h1 {
+        font-family: var(--font-display);
+        color: var(--brand-yellow);
+        font-size: 3rem;
+        margin: 0;
+}
+.dashboard-header p {
+        font-size: 1.1rem;
+        color: var(--text-secondary);
+        margin-top: 0.5rem;
+}
+.dashboard-grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 2rem;
+        margin-top: 2rem;
+}
+.main-col,
+.sidebar-col {
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+}
+.dashboard-section h2 {
+        font-family: var(--font-display);
+        font-size: 1.75rem;
+        letter-spacing: 1px;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-color);
+}
+.session-card {
+        background: var(--surface-1);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+}
 .session-card.today { border-color: var(--brand-green); box-shadow: 0 0 20px rgba(22, 163, 74, 0.2); }
 .session-title { font-size: 1.5rem; font-weight: 600; margin: 0.25rem 0; }
 .primary-btn, .secondary-btn, .live-btn { text-decoration: none; text-align: center; border: none; padding: 0.8rem 2rem; border-radius: 999px; font-weight: 700; cursor: pointer; }
@@ -386,6 +425,7 @@ function handleAmrapSelectChange(event) {
 .stat-card { background: var(--surface-1); border: 1px solid var(--border-color); border-radius: 16px; padding: 1.5rem; }
 .stat-value { font-family: var(--font-display); font-size: 3rem; color: var(--brand-yellow); }
 .stat-label { font-size: 0.9rem; color: var(--text-muted); }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; }
 .pb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 .pb-card {
         display: block;
@@ -562,6 +602,35 @@ function handleAmrapSelectChange(event) {
 }
 
 @media (max-width: 640px) {
+        .page-container {
+                padding: 1.25rem;
+        }
+
+        .dashboard-header h1 {
+                font-size: 2.25rem;
+        }
+
+        .dashboard-header p {
+                font-size: 1rem;
+        }
+
+        .dashboard-grid {
+                gap: 1.25rem;
+        }
+
+        .session-card {
+                flex-direction: column;
+                align-items: stretch;
+        }
+
+        .session-action,
+        .session-action .primary-btn,
+        .session-action .secondary-btn,
+        .session-action .live-btn {
+                width: 100%;
+                display: block;
+        }
+
         .amrap-count {
                 width: 100%;
                 align-items: center;
@@ -578,8 +647,14 @@ function handleAmrapSelectChange(event) {
         }
 
         .round-count-select,
-        .ghost-btn {
+        .ghost-btn,
+        .pb-grid,
+        .stats-grid {
                 width: 100%;
+        }
+
+        .pb-grid {
+                grid-template-columns: 1fr;
         }
 }
 .empty-state { color: var(--text-muted); }
