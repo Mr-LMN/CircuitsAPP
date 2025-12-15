@@ -1942,6 +1942,7 @@ function formatTime(s) {
                 </div>
         {/if}
 </div>
+</div>
 
 
 
