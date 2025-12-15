@@ -167,6 +167,57 @@ let totalTime = 0;
 let showFeedbackModal = false;
 let feedbackRating = 0;
 let feedbackComment = '';
+let uploadWeightSummary = '';
+let uploadCompletionSummary = '';
+
+function formatAmrapSummary(rounds, reps) {
+        const movementName = workout?.exercises?.[0]?.name?.trim();
+        let summaryNote = `Completed ${rounds} round${rounds === 1 ? '' : 's'}`;
+
+        if (reps > 0) {
+                const movementLabel = movementName ? `${movementName}${reps === 1 ? '' : 's'}` : `rep${reps === 1 ? '' : 's'}`;
+                summaryNote += ` + ${reps} ${movementLabel}`;
+        }
+
+        return summaryNote;
+}
+
+function buildWeightSummary() {
+        const weightEntries = cumulativeScores
+                .map((entry, index) => {
+                        const weightValue = Number(entry.score.weight);
+                        if (!Number.isFinite(weightValue) || weightValue <= 0) return null;
+
+                        const stationLabel = entry.stationName?.trim()
+                                ? entry.stationName.trim()
+                                : `Station ${index + 1}`;
+
+                        return `${stationLabel}: ${weightValue} kg`;
+                })
+                .filter(Boolean);
+
+        if (!weightEntries.length) {
+                return 'No weight logged during this session.';
+        }
+
+        return `Weight used – ${weightEntries.join(' • ')}`;
+}
+
+function buildCompletionSummary() {
+        if (completionSummaryEntry?.score?.notes) {
+                return completionSummaryEntry.score.notes;
+        }
+
+        if (isAmrapType && (amrapRoundCount > 0 || amrapExtraReps > 0)) {
+                return formatAmrapSummary(amrapRoundCount, amrapExtraReps);
+        }
+
+        if (isChipperMode && completedChipperSteps.size > 0) {
+                return `Completed ${completedChipperSteps.size} chipper movement${completedChipperSteps.size === 1 ? '' : 's'}.`;
+        }
+
+        return 'Workout log ready to upload.';
+}
 
 function toggleChipperStepCompletion(order) {
         const next = new Set(completedChipperSteps);
@@ -196,10 +247,7 @@ function syncAmrapCompletion(roundsValue = amrapRoundCount, extraValue = amrapEx
                 return;
         }
 
-        let summaryNote = `Completed ${safeRounds} round${safeRounds === 1 ? '' : 's'}`;
-        if (safeReps > 0) {
-                summaryNote += ` + ${safeReps} rep${safeReps === 1 ? '' : 's'}`;
-        }
+        const summaryNote = formatAmrapSummary(safeRounds, safeReps);
 
         completionSummaryEntry = {
                 stationName: 'AMRAP Result',
@@ -685,6 +733,8 @@ function proceedToUpload() {
         feedbackComment = '';
         finalSaveStatus = 'idle';
         finalSaveMessage = '';
+        uploadWeightSummary = buildWeightSummary();
+        uploadCompletionSummary = buildCompletionSummary();
         showFeedbackModal = true;
 }
 
@@ -777,10 +827,7 @@ function submitCompletionForm() {
 
                 syncAmrapCompletion(safeRounds, safeReps);
 
-                let summaryNote = `Completed ${safeRounds} round${safeRounds === 1 ? '' : 's'}`;
-                if (safeReps > 0) {
-                        summaryNote += ` + ${safeReps} rep${safeReps === 1 ? '' : 's'}`;
-                }
+                const summaryNote = formatAmrapSummary(safeRounds, safeReps);
 
                 completionSummaryEntry = {
                         stationName: 'AMRAP Result',
@@ -1902,6 +1949,11 @@ function formatTime(s) {
                         <div class="feedback-card">
                                 <h3 id="feedback-title">How was that session?</h3>
                                 <p>Share anonymous feedback to help shape future workouts.</p>
+                                <div class="upload-recap" aria-live="polite">
+                                        <p class="upload-recap-label">Upload preview</p>
+                                        <p class="upload-recap-line">{uploadWeightSummary}</p>
+                                        <p class="upload-recap-line">{uploadCompletionSummary}</p>
+                                </div>
                                 <div class="feedback-stars" role="group" aria-label="Rate this workout">
                                         {#each [1, 2, 3, 4, 5] as star}
                                                 <button
@@ -1956,11 +2008,11 @@ function formatTime(s) {
 .tracker-container {
         display: flex;
         flex-direction: column;
-        height: 100vh;
+        min-height: 100vh;
         background: var(--deep-space);
         padding: 1rem;
         gap: 1rem;
-        overflow: hidden;
+        overflow-y: auto;
 }
 
 .tracker-layout {
@@ -3377,6 +3429,28 @@ function formatTime(s) {
 }
 
 .feedback-card p {
+        margin: 0;
+        color: var(--text-secondary);
+}
+
+.upload-recap {
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 0.85rem 1rem;
+        background: rgba(15, 23, 42, 0.45);
+        display: grid;
+        gap: 0.3rem;
+}
+
+.upload-recap-label {
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--text-primary);
+        margin: 0;
+}
+
+.upload-recap-line {
         margin: 0;
         color: var(--text-secondary);
 }
