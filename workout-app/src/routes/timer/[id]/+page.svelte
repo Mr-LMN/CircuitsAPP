@@ -11,10 +11,12 @@ const { workout, sessionId } = data;
 const isPartnerMode = workout.mode === 'Partner';
 const isChipperMode = workout.mode === 'Chipper';
 const isEmomType = String(workout?.type ?? '').toLowerCase() === 'emom';
+const isAmrapType = String(workout?.type ?? '').toLowerCase() === 'amrap';
 
 const BASE_DEFAULT_TIMING = { work: 60, swap: 15, move: 15, rounds: 1 };
 const CHIPPER_DEFAULT_TIMING = { work: 20 * 60, swap: 0, move: 0, rounds: 1 };
-const DEFAULT_TIMING = isChipperMode ? CHIPPER_DEFAULT_TIMING : BASE_DEFAULT_TIMING;
+const AMRAP_DEFAULT_TIMING = { work: 20 * 60, swap: 0, move: 0, rounds: 1 };
+const DEFAULT_TIMING = isChipperMode ? CHIPPER_DEFAULT_TIMING : isAmrapType ? AMRAP_DEFAULT_TIMING : BASE_DEFAULT_TIMING;
 
 function normaliseEmomSettings(raw = {}) {
         const every = Number(raw?.restEvery);
@@ -53,11 +55,13 @@ function countBeep(n) { const f = { 3: 520, 2: 680, 1: 940 }; tone(f[n] || 720, 
 // --- Session Config & Timer State ---
 let sessionConfig = { ...DEFAULT_TIMING };
 let chipperDurationMinutes = Math.max(1, Math.round(DEFAULT_TIMING.work / 60));
+let amrapDurationMinutes = Math.max(1, Math.floor(DEFAULT_TIMING.work / 60));
+let amrapDurationSeconds = Math.max(0, DEFAULT_TIMING.work % 60);
 
 function normaliseTimingValues(source = {}) {
         const next = { ...DEFAULT_TIMING, ...sessionConfig };
 
-        if (isChipperMode) {
+        if (isChipperMode || isAmrapType) {
                 const workValue = Number(source.work ?? next.work);
                 next.work = Number.isFinite(workValue) && workValue > 0 ? Math.round(workValue) : DEFAULT_TIMING.work;
                 next.swap = 0;
@@ -103,10 +107,44 @@ $: if (isChipperMode) {
         }
 }
 
+$: if (isAmrapType) {
+        const totalSeconds = Math.max(1, Math.round(Number(sessionConfig.work) || DEFAULT_TIMING.work));
+        const nextMinutes = Math.floor(totalSeconds / 60);
+        const nextSeconds = totalSeconds % 60;
+        if (nextMinutes !== amrapDurationMinutes || nextSeconds !== amrapDurationSeconds) {
+                amrapDurationMinutes = nextMinutes;
+                amrapDurationSeconds = nextSeconds;
+        }
+}
+
 function setChipperDurationMinutes(value) {
         const minutes = Math.max(1, Math.round(Number(value) || 0));
         chipperDurationMinutes = minutes;
         sessionConfig = { ...sessionConfig, work: minutes * 60, swap: 0, move: 0, rounds: 1 };
+        if (state.phaseIndex === -1) {
+                state.remaining = timingValue('work');
+                state.duration = timingValue('work');
+                state = state;
+        }
+}
+
+function setAmrapMinutes(value) {
+        const minutes = Math.max(0, Math.round(Number(value) || 0));
+        amrapDurationMinutes = minutes;
+        const nextTotal = minutes * 60 + Math.max(0, Math.min(59, amrapDurationSeconds));
+        sessionConfig = { ...sessionConfig, work: Math.max(1, nextTotal), swap: 0, move: 0, rounds: 1 };
+        if (state.phaseIndex === -1) {
+                state.remaining = timingValue('work');
+                state.duration = timingValue('work');
+                state = state;
+        }
+}
+
+function setAmrapSeconds(value) {
+        const seconds = Math.max(0, Math.min(59, Math.round(Number(value) || 0)));
+        amrapDurationSeconds = seconds;
+        const nextTotal = Math.max(1, amrapDurationMinutes * 60 + seconds);
+        sessionConfig = { ...sessionConfig, work: nextTotal, swap: 0, move: 0, rounds: 1 };
         if (state.phaseIndex === -1) {
                 state.remaining = timingValue('work');
                 state.duration = timingValue('work');
@@ -173,26 +211,30 @@ $: stationRoster = isChipperMode
         });
 $: progress = state.duration > 0 ? Math.min(100, Math.max(0, ((state.duration - state.remaining) / state.duration) * 100)) : 0;
 $: {
-        const roundsCount = Math.max(1, Math.round(Number(sessionConfig.rounds) || 1));
-        const workDuration = timingValue('work');
-        const swapDuration = timingValue('swap');
-        const moveDuration = timingValue('move');
-        const perStation = workout.mode === 'Partner'
-                ? workDuration * 2 + swapDuration + moveDuration
-                : workDuration + moveDuration;
+        if (isAmrapType) {
+                totalTime = Math.round(timingValue('work') / 60);
+        } else {
+                const roundsCount = Math.max(1, Math.round(Number(sessionConfig.rounds) || 1));
+                const workDuration = timingValue('work');
+                const swapDuration = timingValue('swap');
+                const moveDuration = timingValue('move');
+                const perStation = workout.mode === 'Partner'
+                        ? workDuration * 2 + swapDuration + moveDuration
+                        : workDuration + moveDuration;
 
-        let totalSeconds = totalStations > 0 ? perStation * totalStations * roundsCount : 0;
+                let totalSeconds = totalStations > 0 ? perStation * totalStations * roundsCount : 0;
 
-        if (isEmomType && !isPartnerMode && totalStations > 0) {
-                const { restEvery, restDuration } = emomSettings;
-                if (restEvery > 0 && restDuration > 0) {
-                        const restPeriodsPerRound = Math.max(0, Math.floor((totalStations - 1) / restEvery));
-                        const restPerRound = restPeriodsPerRound * restDuration;
-                        totalSeconds = (perStation * totalStations + restPerRound) * roundsCount;
+                if (isEmomType && !isPartnerMode && totalStations > 0) {
+                        const { restEvery, restDuration } = emomSettings;
+                        if (restEvery > 0 && restDuration > 0) {
+                                const restPeriodsPerRound = Math.max(0, Math.floor((totalStations - 1) / restEvery));
+                                const restPerRound = restPeriodsPerRound * restDuration;
+                                totalSeconds = (perStation * totalStations + restPerRound) * roundsCount;
+                        }
                 }
-        }
 
-        totalTime = totalStations > 0 ? Math.round(totalSeconds / 60) : 0;
+                totalTime = totalStations > 0 ? Math.round(totalSeconds / 60) : 0;
+        }
 }
 $: startButtonLabel = state.isRunning ? 'Pause' : state.phaseIndex >= 0 && !state.isComplete ? 'Resume' : 'Start';
 
@@ -356,6 +398,23 @@ workoutComplete();
 broadcastLiveState(true);
 return;
 }
+
+if (isAmrapType) {
+        if (state.phaseIndex === -1 || state.phaseType === 'idle') {
+                state.phaseIndex = 0;
+                state.phaseType = 'work';
+                state.phase = 'AMRAP';
+                state.currentStation = 0;
+                state.currentRound = 1;
+                state.remaining = state.duration = workDuration;
+                whistleBell();
+        } else {
+                workoutComplete();
+        }
+
+        broadcastLiveState(true);
+        return;
+ }
 
 if (handleEmomAdvance(workDuration)) {
         broadcastLiveState(true);
@@ -593,6 +652,30 @@ console.error('Failed to initialise live state', error);
                                 on:change={(event) => setChipperDurationMinutes(event.target?.value)}
                         />
                 </label>
+        {:else if isAmrapType}
+                <label for="setup-amrap-minutes">Duration (minutes)
+                        <input
+                                id="setup-amrap-minutes"
+                                type="number"
+                                min="0"
+                                inputmode="numeric"
+                                value={amrapDurationMinutes}
+                                on:input={(event) => setAmrapMinutes(event.target?.value)}
+                                on:change={(event) => setAmrapMinutes(event.target?.value)}
+                        />
+                </label>
+                <label for="setup-amrap-seconds">Additional seconds
+                        <input
+                                id="setup-amrap-seconds"
+                                type="number"
+                                min="0"
+                                max="59"
+                                inputmode="numeric"
+                                value={amrapDurationSeconds}
+                                on:input={(event) => setAmrapSeconds(event.target?.value)}
+                                on:change={(event) => setAmrapSeconds(event.target?.value)}
+                        />
+                </label>
         {:else}
                 <label for="setup-work">Work (seconds)<input id="setup-work" type="number" min="1" bind:value={sessionConfig.work} /></label>
                 <label for="setup-swap">Swap (seconds)<input id="setup-swap" type="number" min="0" bind:value={sessionConfig.swap} disabled={workout.mode !== 'Partner'} /></label>
@@ -643,6 +726,9 @@ console.error('Failed to initialise live state', error);
         {#if isChipperMode}
                 <div class="highlight"><span class="label">Duration</span><span class="value">{formatMinutesLabel(sessionConfig.work)}</span></div>
                 <div class="highlight"><span class="label">Format</span><span class="value">Solo Flow</span></div>
+        {:else if isAmrapType}
+                <div class="highlight"><span class="label">Duration</span><span class="value">{formatMinutesLabel(sessionConfig.work)}</span></div>
+                <div class="highlight"><span class="label">Format</span><span class="value">AMRAP</span></div>
         {:else}
                 <div class="highlight"><span class="label">Work</span><span class="value">{sessionConfig.work}s</span></div>
                 {#if workout.mode === 'Partner'}
@@ -701,7 +787,7 @@ console.error('Failed to initialise live state', error);
 
   <div class="station-grid" class:solo={!isPartnerMode}>
     {#each workout.exercises as station, i (station.id ?? i)}
-      <article class="station-card" class:current={i === state.currentStation}>
+      <article class="station-card" class:current={!isAmrapType && i === state.currentStation}>
         <header class="station-card__header">
           <span class="station-number">{i + 1}</span>
           <h3>{station.name}</h3>
@@ -760,6 +846,9 @@ console.error('Failed to initialise live state', error);
         {#if isChipperMode}
                 <span>Chipper session • Solo flow</span>
                 <span>Cap: {formatMinutesLabel(sessionConfig.work)}</span>
+        {:else if isAmrapType}
+                <span>AMRAP session</span>
+                <span>Clock: {formatMinutesLabel(sessionConfig.work)}</span>
         {:else}
                 <span>Station {Math.min(state.currentStation + 1, totalStations)}/{totalStations}</span>
                 <span>Round {Math.min(state.currentRound, sessionConfig.rounds)}/{sessionConfig.rounds}</span>
