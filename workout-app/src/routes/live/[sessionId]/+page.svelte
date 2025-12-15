@@ -1356,7 +1356,34 @@ function formatTime(s) {
                                                 {/if}
                                         </section>
 
-                                        {#if myStationData}
+                                        {#if isAmrapType}
+                                                <section class="amrap-overview workout-overview" aria-labelledby="amrap-list-title">
+                                                        <div class="station-heading">
+                                                                <span class="station-eyebrow">Workout Flow</span>
+                                                                <h2 id="amrap-list-title">AMRAP exercises</h2>
+                                                                <p class="station-meta">Complete as many rounds as possible before the clock hits zero.</p>
+                                                        </div>
+                                                        {#if workout.exercises?.length}
+                                                                <ol class="amrap-list">
+                                                                        {#each workout.exercises as exercise, index}
+                                                                                <li>
+                                                                                        <div class="amrap-line">
+                                                                                                <span class="amrap-order">{index + 1}</span>
+                                                                                                <div class="amrap-details">
+                                                                                                        <p class="amrap-name">{exercise.name}</p>
+                                                                                                        {#if exercise.category}
+                                                                                                                <span class="task-chip subtle">{exercise.category}</span>
+                                                                                                        {/if}
+                                                                                                </div>
+                                                                                        </div>
+                                                                                </li>
+                                                                        {/each}
+                                                                </ol>
+                                                        {:else}
+                                                                <p class="rest-callout">Add exercises to this AMRAP in the admin setup to see them here.</p>
+                                                        {/if}
+                                                </section>
+                                        {:else if myStationData}
                                                 <section class="station-overview" aria-labelledby="station-now-title">
                                                         <div class="station-heading">
                                                                 <span class="station-eyebrow">Now</span>
@@ -1995,6 +2022,45 @@ function formatTime(s) {
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
+}
+
+.amrap-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+}
+
+.amrap-line {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+}
+
+.amrap-order {
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        background: var(--surface-1);
+}
+
+.amrap-details {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+}
+
+.amrap-name {
+        margin: 0;
+        font-weight: 600;
 }
 
 .station-heading h2,
