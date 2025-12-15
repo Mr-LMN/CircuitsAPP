@@ -149,6 +149,8 @@ let completionForm = {
         amrapRounds: '',
         amrapReps: ''
 };
+let amrapRoundCount = 0;
+let amrapExtraReps = 0;
 let completionSummaryEntry = null;
 let completionFinisherEntry = null;
 let finisherMetric = null;
@@ -174,6 +176,48 @@ function toggleChipperStepCompletion(order) {
                 next.add(order);
         }
         completedChipperSteps = next;
+}
+
+function syncAmrapCompletion(roundsValue = amrapRoundCount, extraValue = amrapExtraReps) {
+        const safeRounds = Math.max(0, Math.floor(Number(roundsValue) || 0));
+        const safeReps = Math.max(0, Math.floor(Number(extraValue) || 0));
+
+        amrapRoundCount = safeRounds;
+        amrapExtraReps = safeReps;
+
+        completionForm = {
+                ...completionForm,
+                amrapRounds: String(safeRounds),
+                amrapReps: String(safeReps)
+        };
+
+        if (safeRounds === 0 && safeReps === 0) {
+                completionSummaryEntry = null;
+                return;
+        }
+
+        let summaryNote = `Completed ${safeRounds} round${safeRounds === 1 ? '' : 's'}`;
+        if (safeReps > 0) {
+                summaryNote += ` + ${safeReps} rep${safeReps === 1 ? '' : 's'}`;
+        }
+
+        completionSummaryEntry = {
+                stationName: 'AMRAP Result',
+                category: 'AMRAP',
+                score: { notes: summaryNote }
+        };
+        completionFinisherEntry = null;
+}
+
+function adjustAmrapRounds(delta) {
+        if (!isAmrapType) return;
+        const next = Math.max(0, amrapRoundCount + delta);
+        syncAmrapCompletion(next, amrapExtraReps);
+}
+
+function handleAmrapRepsInput(event) {
+        const value = event?.currentTarget?.value ?? event?.target?.value ?? '0';
+        syncAmrapCompletion(amrapRoundCount, value);
 }
 
 $: if (!isChipperMode && completedChipperSteps.size) {
@@ -730,6 +774,8 @@ function submitCompletionForm() {
                         amrapRounds: String(safeRounds),
                         amrapReps: String(safeReps)
                 };
+
+                syncAmrapCompletion(safeRounds, safeReps);
 
                 let summaryNote = `Completed ${safeRounds} round${safeRounds === 1 ? '' : 's'}`;
                 if (safeReps > 0) {
@@ -1288,6 +1334,7 @@ function formatTime(s) {
                         </section>
                 {/if}
 
+
                 <div class={isChipperMode ? 'chipper-content-grid' : 'standard-content-grid'}>
                         {#if isChipperMode}
                                 <section class="chipper-overview" aria-labelledby="chipper-title">
@@ -1337,6 +1384,102 @@ function formatTime(s) {
                                                 </div>
                                         {/if}
                                 </section>
+                        {:else if isAmrapType}
+                                <section class="amrap-simple-grid" aria-labelledby="amrap-simple-title">
+                                        <div class="amrap-time-card">
+                                                <p class="eyebrow">Time remaining</p>
+                                                <p class="amrap-clock">{formatTime(liveState.remaining)}</p>
+                                                <div class="phase-meta">
+                                                        <span class="phase-chip">{liveState.phase}</span>
+                                                        {#if intervalDuration}
+                                                                <span class="phase-chip">Interval: {Math.round(intervalDuration)}s</span>
+                                                        {/if}
+                                                </div>
+                                        </div>
+                                        <div class="amrap-move-card">
+                                                <p class="eyebrow">AMRAP Flow</p>
+                                                <h2 id="amrap-simple-title">Complete these on repeat</h2>
+                                                {#if workout.exercises?.length}
+                                                        <ol class="amrap-move-list">
+                                                                {#each workout.exercises as exercise, index}
+                                                                        <li>
+                                                                                <span class="amrap-order">{index + 1}</span>
+                                                                                <div class="amrap-move-details">
+                                                                                        <strong>{exercise.name}</strong>
+                                                                                        {#if exercise.category}
+                                                                                                <span class="task-chip subtle">{exercise.category}</span>
+                                                                                        {/if}
+                                                                                        {#if exercise.description}
+                                                                                                <span class="amrap-desc">{exercise.description}</span>
+                                                                                        {/if}
+                                                                                </div>
+                                                                        </li>
+                                                                {/each}
+                                                        </ol>
+                                                {:else}
+                                                        <p class="rest-callout">Add movements to this AMRAP in the admin setup to see them here.</p>
+                                                {/if}
+                                        </div>
+                                        <div class="amrap-round-card">
+                                                <p class="eyebrow">Rounds completed</p>
+                                                <div class="amrap-round-controls">
+                                                        <button type="button" class="round-step" on:click={() => adjustAmrapRounds(-1)} disabled={amrapRoundCount === 0} aria-label="Decrease rounds">
+                                                                −
+                                                        </button>
+                                                        <div class="amrap-round-display">{amrapRoundCount}</div>
+                                                        <button type="button" class="round-step" on:click={() => adjustAmrapRounds(1)} aria-label="Increase rounds">
+                                                                +
+                                                        </button>
+                                                </div>
+                                                <label class="extra-reps-field">
+                                                        <span>Extra reps (optional)</span>
+                                                        <input
+                                                                type="number"
+                                                                min="0"
+                                                                inputmode="numeric"
+                                                                value={amrapExtraReps}
+                                                                on:input={handleAmrapRepsInput}
+                                                                aria-label="Extra reps after last full round"
+                                                        />
+                                                </label>
+                                                <p class="round-hint">Saved straight to your benchmark dashboard when you end the workout.</p>
+                                        </div>
+                                </section>
+
+                                {#if liveState.isComplete}
+                                        <section class="post-workout-card" aria-live="polite">
+                                                <h2>Workout complete</h2>
+                                                <p>Upload your results to save them to your dashboard.</p>
+                                                {#if requiresCompletionLog}
+                                                        {#if completionFinisherEntry || completionSummaryEntry}
+                                                                <div class="completion-summary">
+                                                                        {#if completionFinisherEntry?.score?.cals}
+                                                                                <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.cals} cal{completionFinisherEntry.score.cals === 1 ? '' : 's'}</strong></div>
+                                                                        {:else if completionFinisherEntry?.score?.reps}
+                                                                                <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.reps} rep{completionFinisherEntry.score.reps === 1 ? '' : 's'}</strong></div>
+                                                                        {/if}
+                                                                        {#if completionSummaryEntry?.score?.notes}
+                                                                                <div class="summary-line"><span>Progress</span><strong>{completionSummaryEntry.score.notes}</strong></div>
+                                                                        {/if}
+                                                                        <button type="button" class="btn btn-outline" on:click={openCompletionModal}>Edit result</button>
+                                                                </div>
+                                                        {:else}
+                                                                <p class="completion-hint">Log your finish to wrap up this session.</p>
+                                                                <button type="button" class="btn ghost" on:click={openCompletionModal}>Log finish</button>
+                                                        {/if}
+                                                {/if}
+                                                <button
+                                                        class="btn btn-primary"
+                                                        on:click={startUpload}
+                                                        disabled={finalSaveStatus === 'saving' || hasSavedFinalScore}
+                                                >
+                                                        {hasSavedFinalScore ? 'Uploaded' : finalSaveStatus === 'saving' ? 'Uploading...' : 'End workout'}
+                                                </button>
+                                                {#if finalSaveMessage}
+                                                        <p class={`status ${finalSaveStatus}`}>{finalSaveMessage}</p>
+                                                {/if}
+                                        </section>
+                                {/if}
                         {:else}
                                 <aside class="session-sidebar">
                                         <section class="timer-card" aria-live="polite">
@@ -1356,34 +1499,7 @@ function formatTime(s) {
                                                 {/if}
                                         </section>
 
-                                        {#if isAmrapType}
-                                                <section class="amrap-overview workout-overview" aria-labelledby="amrap-list-title">
-                                                        <div class="station-heading">
-                                                                <span class="station-eyebrow">Workout Flow</span>
-                                                                <h2 id="amrap-list-title">AMRAP exercises</h2>
-                                                                <p class="station-meta">Complete as many rounds as possible before the clock hits zero.</p>
-                                                        </div>
-                                                        {#if workout.exercises?.length}
-                                                                <ol class="amrap-list">
-                                                                        {#each workout.exercises as exercise, index}
-                                                                                <li>
-                                                                                        <div class="amrap-line">
-                                                                                                <span class="amrap-order">{index + 1}</span>
-                                                                                                <div class="amrap-details">
-                                                                                                        <p class="amrap-name">{exercise.name}</p>
-                                                                                                        {#if exercise.category}
-                                                                                                                <span class="task-chip subtle">{exercise.category}</span>
-                                                                                                        {/if}
-                                                                                                </div>
-                                                                                        </div>
-                                                                                </li>
-                                                                        {/each}
-                                                                </ol>
-                                                        {:else}
-                                                                <p class="rest-callout">Add exercises to this AMRAP in the admin setup to see them here.</p>
-                                                        {/if}
-                                                </section>
-                                        {:else if myStationData}
+                                        {#if myStationData}
                                                 <section class="station-overview" aria-labelledby="station-now-title">
                                                         <div class="station-heading">
                                                                 <span class="station-eyebrow">Now</span>
@@ -1473,300 +1589,237 @@ function formatTime(s) {
                                                 </section>
                                         {/if}
                                 </aside>
-                        {/if}
 
-                        <main class="session-main">
-                        {#if workout.mode === 'Partner' && showPairingControls}
-                                <section class="pairing-controls" aria-live="polite">
-                                        <div class="pairing-copy">
-                                                <h2>Partner pairing</h2>
-                                                <p>Choose how you'd like to train for this partner workout.</p>
-                                        </div>
-                                        <div class="pairing-actions">
-                                                <div class="pairing-toggle" role="radiogroup" aria-label="Partner preference">
-                                                        <button
-                                                                type="button"
-                                                                class:active={isTrainingSolo}
-                                                                class:locked={pairingLocked}
-                                                                on:click={selectSoloMode}
-                                                                aria-pressed={isTrainingSolo}
-                                                                disabled={rosterStatus !== 'idle' || pairingLocked}
-                                                        >
-                                                                I'm riding solo
-                                                        </button>
-                                                        <button
-                                                                type="button"
-                                                                class:active={!isTrainingSolo}
-                                                                class:locked={pairingLocked}
-                                                                on:click={selectPartnerMode}
-                                                                aria-pressed={!isTrainingSolo}
-                                                                disabled={rosterStatus !== 'idle' || pairingLocked}
-                                                        >
-                                                                Pair me up
-                                                        </button>
-                                                </div>
-                                                <p class="pairing-status" aria-live="polite">{partnerStatusText}</p>
-                                                {#if pairingLocked}
-                                                        <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
-                                                {/if}
-                                                {#if rosterError}
-                                                        <p class="pairing-error">{rosterError}</p>
-                                                {/if}
-                                        </div>
-                                </section>
-                        {:else if workout.mode === 'Partner'}
-                                <div class="pairing-summary" aria-live="polite">
-                                        <div class="summary-row">
-                                                <span class={`summary-chip ${isTrainingSolo ? 'solo' : 'partner'}`}>
-                                                        {isTrainingSolo ? 'Training solo' : 'Partner rotation'}
-                                                </span>
-                                                {#if myPartnerRole}
-                                                        <span class="summary-chip role">{myPartnerRole}</span>
-                                                {/if}
-                                                {#if pairingLocked}
-                                                        <span class="summary-chip locked">Locked</span>
-                                                {/if}
-                                        </div>
-                                        <p class="pairing-status">{partnerStatusText}</p>
-                                        {#if rosterError}<p class="pairing-error">{rosterError}</p>{/if}
-                                        {#if pairingLocked}
-                                                <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
-                                        {/if}
-                                </div>
-                        {/if}
-
-                        {#if myStationData}
-                                <section class="score-card">
-                                        <header class="score-header">
-                                                <div class="score-title">
-                                                        <span class="score-eyebrow">Log your score</span>
-                                                        <h2>{myActiveTaskLabel || myStationData.name}</h2>
-                                                        <p class="score-subtitle">
-                                                                {#if isChipperMode}
-                                                                        Finisher · {myStationData.name}
-                                                                {:else}
-                                                                        Station {myCurrentStationIndex + 1} · {myStationData.name}
-                                                                {/if}
-                                                        </p>
-                                                </div>
-                                                <div class="score-meta">
-                                                        {#if metricLabel}<span class="score-chip emphasis">{metricLabel}</span>{/if}
-                                                        {#if activeTask.category && metricLabel !== activeTask.category}
-                                                                <span class="score-chip subtle">{activeTask.category}</span>
-                                                        {/if}
-                                                        {#if intervalDuration}
-                                                                <span class="score-chip">Interval: {Math.round(intervalDuration)}s</span>
-                                                        {/if}
-                                                </div>
-                                        </header>
-
-                                        {#if isRestPhase}
-                                                <div class="score-rest-banner" aria-live="polite">
-                                                        Recovery minute — log your score and take a breath before the next interval.
-                                                </div>
-                                        {/if}
-
-                                        <p class="score-helper">
-                                                {#if isChipperMode}
-                                                        Log the calories you rack up once you reach the finisher. Add a new entry each time you hop back on the machine.
-                                                {:else}
-                                                        Record the effort you hit for this interval. We'll add it to your running total automatically.
-                                                {/if}
-                                        </p>
-
-                                        {#if equipmentOptions.length && myCurrentStationIndex >= 0}
-                                                <div class="score-equipment-selector">
-                                                        <div class="selector-header">
-                                                                <span class="selector-label">What did you use?</span>
-                                                                <button
-                                                                        type="button"
-                                                                        class="clear-selection"
-                                                                        on:click={() => handleSelectionChange(myCurrentStationIndex, '')}
-                                                                        disabled={!selectedEquipment}
-                                                                >
-                                                                        Clear
-                                                                </button>
+                                <main class="session-main">
+                                        {#if workout.mode === 'Partner' && showPairingControls}
+                                                <section class="pairing-controls" aria-live="polite">
+                                                        <div class="pairing-copy">
+                                                                <h2>Partner pairing</h2>
+                                                                <p>Choose how you'd like to train for this partner workout.</p>
                                                         </div>
-                                                        <div class="selector-grid">
-                                                                {#each equipmentOptions as option (option)}
-                                                                        {@const isSelected = selectedEquipment === option}
-                                                                        <label class:active={isSelected}>
-                                                                                <input
-                                                                                        type="radio"
-                                                                                        name={`equipment-choice-${myCurrentStationIndex}`}
-                                                                                        value={option}
-                                                                                        checked={isSelected}
-                                                                                        on:change={() => handleSelectionChange(myCurrentStationIndex, option)}
-                                                                                />
-                                                                                <span>{option}</span>
+                                                        <div class="pairing-actions">
+                                                                <div class="pairing-toggle" role="radiogroup" aria-label="Partner preference">
+                                                                        <button
+                                                                                type="button"
+                                                                                class:active={isTrainingSolo}
+                                                                                class:locked={pairingLocked}
+                                                                                on:click={selectSoloMode}
+                                                                                aria-pressed={isTrainingSolo}
+                                                                                disabled={rosterStatus !== 'idle' || pairingLocked}
+                                                                        >
+                                                                                I'm riding solo
+                                                                        </button>
+                                                                        <button
+                                                                                type="button"
+                                                                                class:active={!isTrainingSolo}
+                                                                                class:locked={pairingLocked}
+                                                                                on:click={selectPartnerMode}
+                                                                                aria-pressed={!isTrainingSolo}
+                                                                                disabled={rosterStatus !== 'idle' || pairingLocked}
+                                                                        >
+                                                                                Pair me up
+                                                                        </button>
+                                                                </div>
+                                                                <p class="pairing-status" aria-live="polite">{partnerStatusText}</p>
+                                                                {#if pairingLocked}
+                                                                        <p class="pairing-note">Selection locked for this session. Chat with your coach if you need to change it.</p>
+                                                                {/if}
+                                                                {#if rosterError}
+                                                                        <p class="pairing-error">{rosterError}</p>
+                                                                {/if}
+                                                        </div>
+                                                </section>
+                                        {/if}
+
+                                        {#if myCurrentStationIndex !== -1}
+                                                <section class="score-card" aria-live="polite">
+                                                        <header class="score-header">
+                                                                <div>
+                                                                        <p class="score-eyebrow">Log your effort</p>
+                                                                        <h2>Station {myCurrentStationIndex + 1}</h2>
+                                                                        <p class="score-meta">{metricLabel}</p>
+                                                                </div>
+                                                                <div class="equipment-select">
+                                                                        <label>
+                                                                                Equipment used
+                                                                                <select
+                                                                                        value={selectedEquipment}
+                                                                                        on:change={(event) => setSelectedEquipment(event.currentTarget?.value ?? event.target?.value ?? '')}
+                                                                                >
+                                                                                        <option value="">Select equipment</option>
+                                                                                        {#each equipmentOptions as equipment}
+                                                                                                <option value={equipment} selected={equipment === selectedEquipment}>{equipment}</option>
+                                                                                        {/each}
+                                                                                </select>
                                                                         </label>
-                                                                {/each}
+                                                                        {#if equipmentHistory.length}
+                                                                                <p class="equipment-history">History: {equipmentHistory.join(', ')}</p>
+                                                                        {/if}
+                                                                </div>
+                                                        </header>
+
+                                                        {#if metricCategory === 'Cardio Machine'}
+                                                                <div class="input-grid">
+                                                                        <label>
+                                                                                Calories burned
+                                                                                <input
+                                                                                        type="number"
+                                                                                        min="0"
+                                                                                        inputmode="decimal"
+                                                                                        placeholder="e.g. 75"
+                                                                                        value={currentEntries[myCurrentStationIndex].score.cals}
+                                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'cals', event.target.value)}
+                                                                                />
+                                                                        </label>
+                                                                        <label>
+                                                                                Distance covered
+                                                                                <input
+                                                                                        type="text"
+                                                                                        placeholder="e.g. 1.2 km or 950 m"
+                                                                                        value={currentEntries[myCurrentStationIndex].score.dist}
+                                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'dist', event.target.value)}
+                                                                                />
+                                                                        </label>
+                                                                </div>
+                                                        {:else if metricCategory === 'Resistance'}
+                                                                <div class="input-grid">
+                                                                        <label>
+                                                                                Reps completed
+                                                                                <input
+                                                                                        type="number"
+                                                                                        min="0"
+                                                                                        inputmode="decimal"
+                                                                                        placeholder="e.g. 12"
+                                                                                        value={currentEntries[myCurrentStationIndex].score.reps}
+                                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
+                                                                                />
+                                                                        </label>
+                                                                        <label>
+                                                                                Weight lifted (kg)
+                                                                                <input
+                                                                                        type="number"
+                                                                                        min="0"
+                                                                                        inputmode="decimal"
+                                                                                        placeholder="e.g. 40"
+                                                                                        value={currentEntries[myCurrentStationIndex].score.weight}
+                                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'weight', event.target.value)}
+                                                                                />
+                                                                        </label>
+                                                                </div>
+                                                        {:else}
+                                                                <label class="full-width">
+                                                                        Reps completed
+                                                                        <input
+                                                                                type="number"
+                                                                                min="0"
+                                                                                inputmode="decimal"
+                                                                                placeholder="e.g. 30"
+                                                                                value={currentEntries[myCurrentStationIndex].score.reps}
+                                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
+                                                                        />
+                                                                </label>
+                                                        {/if}
+
+                                                        <label class="full-width notes-input">
+                                                                Notes (optional)
+                                                                <textarea
+                                                                        rows="2"
+                                                                        placeholder="Add cues, scaling or modifications"
+                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'notes', event.target.value)}
+                                                                >{currentEntries[myCurrentStationIndex].score.notes}</textarea>
+                                                        </label>
+
+                                                        <div class="actions-row">
+                                                                <button
+                                                                        class="btn btn-save"
+                                                                        on:click={() => commitStationScore(myCurrentStationIndex)}
+                                                                        disabled={!hasPendingForCurrent || rosterStatus === 'leaving'}
+                                                                >
+                                                                        ✓ Save interval
+                                                                </button>
+
+                                                                {#if lastSaveMessage && lastSavedStationIndex === myCurrentStationIndex}
+                                                                        <p class={`save-feedback ${lastSaveType}`}>{lastSaveMessage}</p>
+                                                                {/if}
                                                         </div>
-                                                </div>
-                                        {/if}
 
-                                        <div class="input-grid" class:two-column={metricCategory === 'Resistance' || metricCategory === 'Cardio Machine'}>
-                                                {#if metricCategory === 'Resistance'}
-                                                        <label class="input-field">
-                                                                <span>Reps</span>
-                                                                <input
-                                                                        type="number"
-                                                                        inputmode="numeric"
-                                                                        min="0"
-                                                                        placeholder="e.g. 12"
-                                                                        value={currentEntries[myCurrentStationIndex].score.reps}
-                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
-                                                                />
-                                                        </label>
-                                                        <label class="input-field">
-                                                                <span>Weight (kg)</span>
-                                                                <input
-                                                                        type="number"
-                                                                        inputmode="decimal"
-                                                                        min="0"
-                                                                        placeholder="e.g. 40"
-                                                                        value={currentEntries[myCurrentStationIndex].score.weight}
-                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'weight', event.target.value)}
-                                                                />
-                                                        </label>
-                                                {:else if metricCategory === 'Cardio Machine'}
-                                                        <label class="input-field">
-                                                                <span>Calories</span>
-                                                                <input
-                                                                        type="number"
-                                                                        inputmode="numeric"
-                                                                        min="0"
-                                                                        placeholder="e.g. 20"
-                                                                        value={currentEntries[myCurrentStationIndex].score.cals}
-                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'cals', event.target.value)}
-                                                                />
-                                                        </label>
-                                                        <label class="input-field">
-                                                                <span>Distance (m)</span>
-                                                                <input
-                                                                        type="text"
-                                                                        inputmode="decimal"
-                                                                        placeholder="e.g. 250m"
-                                                                        value={currentEntries[myCurrentStationIndex].score.dist}
-                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'dist', event.target.value)}
-                                                                />
-                                                        </label>
-                                                {:else}
-                                                        <label class="input-field full">
-                                                                <span>Reps</span>
-                                                                <input
-                                                                        type="number"
-                                                                        inputmode="numeric"
-                                                                        min="0"
-                                                                        placeholder="e.g. 15"
-                                                                        value={currentEntries[myCurrentStationIndex].score.reps}
-                                                                        on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
-                                                                />
-                                                        </label>
-                                                {/if}
-
-                                                <label class="input-field full notes-field">
-                                                        <span>Notes (optional)</span>
-                                                        <textarea
-                                                                rows="2"
-                                                                placeholder="Add cues, scaling or modifications"
-                                                                on:input={(event) => handleEntryChange(myCurrentStationIndex, 'notes', event.target.value)}
-                                                        >{currentEntries[myCurrentStationIndex].score.notes}</textarea>
-                                                </label>
-                                        </div>
-
-                                        <div class="actions-row">
-                                                <button
-                                                        class="btn btn-save"
-                                                        on:click={() => commitStationScore(myCurrentStationIndex)}
-                                                        disabled={!hasPendingForCurrent || rosterStatus === 'leaving'}
-                                                >
-                                                        ✓ Save interval
-                                                </button>
-
-                                                {#if lastSaveMessage && lastSavedStationIndex === myCurrentStationIndex}
-                                                        <p class={`save-feedback ${lastSaveType}`}>{lastSaveMessage}</p>
-                                                {/if}
-                                        </div>
-
-                                        {#if hasTotals(myCurrentStationIndex)}
-                                                <div class="totals">
-                                                        <h3>Totals logged</h3>
-                                                        <ul>
-                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.reps) > 0}
-                                                                        <li><span>Reps</span><span>{cumulativeScores[myCurrentStationIndex].score.reps}</span></li>
-                                                                {/if}
-                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.weight) > 0}
-                                                                        <li><span>Weight</span><span>{cumulativeScores[myCurrentStationIndex].score.weight} kg</span></li>
-                                                                {/if}
-                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.cals) > 0}
-                                                                        <li><span>Calories</span><span>{cumulativeScores[myCurrentStationIndex].score.cals}</span></li>
-                                                                {/if}
-                                                                {#if cumulativeScores[myCurrentStationIndex].score.dist && cumulativeScores[myCurrentStationIndex].score.dist.trim()}
-                                                                        <li><span>Distance</span><span>{cumulativeScores[myCurrentStationIndex].score.dist}</span></li>
-                                                                {/if}
-                                                                {#if equipmentHistory.length}
-                                                                        <li><span>Equipment</span><span>{equipmentHistory.join(', ')}</span></li>
-                                                                {/if}
-                                                                {#if cumulativeScores[myCurrentStationIndex].score.notes && cumulativeScores[myCurrentStationIndex].score.notes.trim()}
-                                                                        <li class="notes-total"><span>Notes</span><span>{cumulativeScores[myCurrentStationIndex].score.notes}</span></li>
-                                                                {/if}
-                                                        </ul>
-                                                </div>
-                                        {/if}
-                                </section>
-                        {:else if isChipperMode}
-                                <section class="score-card placeholder" aria-live="polite">
-                                        <div class="placeholder-clock">
-                                                <span class="clock-label">Time remaining</span>
-                                                <span class="clock-time">{formatTime(liveState.remaining)}</span>
-                                        </div>
-                                </section>
-                        {:else}
-                                <section class="score-card placeholder">
-                                        <h2>Waiting for your station</h2>
-                                        <p>We'll assign you to a station as soon as one opens up. Keep an eye on the timer above.</p>
-                                </section>
-                        {/if}
-
-                        {#if liveState.isComplete}
-                                <section class="post-workout-card" aria-live="polite">
-                                        <h2>Workout complete</h2>
-                                        <p>Upload your results to save them to your dashboard.</p>
-                                        {#if requiresCompletionLog}
-                                                {#if completionFinisherEntry || completionSummaryEntry}
-                                                        <div class="completion-summary">
-                                                                {#if completionFinisherEntry?.score?.cals}
-                                                                        <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.cals} cal{completionFinisherEntry.score.cals === 1 ? '' : 's'}</strong></div>
-                                                                {:else if completionFinisherEntry?.score?.reps}
-                                                                        <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.reps} rep{completionFinisherEntry.score.reps === 1 ? '' : 's'}</strong></div>
-                                                                {/if}
-                                                                {#if completionSummaryEntry?.score?.notes}
-                                                                        <div class="summary-line"><span>Progress</span><strong>{completionSummaryEntry.score.notes}</strong></div>
-                                                                {/if}
-                                                                <button type="button" class="btn btn-outline" on:click={openCompletionModal}>Edit result</button>
+                                                        {#if hasTotals(myCurrentStationIndex)}
+                                                                <div class="totals">
+                                                                        <h3>Totals logged</h3>
+                                                                        <ul>
+                                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.reps) > 0}
+                                                                                        <li><span>Reps</span><span>{cumulativeScores[myCurrentStationIndex].score.reps}</span></li>
+                                                                                {/if}
+                                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.weight) > 0}
+                                                                                        <li><span>Weight</span><span>{cumulativeScores[myCurrentStationIndex].score.weight} kg</span></li>
+                                                                                {/if}
+                                                                                {#if Number(cumulativeScores[myCurrentStationIndex].score.cals) > 0}
+                                                                                        <li><span>Calories</span><span>{cumulativeScores[myCurrentStationIndex].score.cals}</span></li>
+                                                                                {/if}
+                                                                                {#if cumulativeScores[myCurrentStationIndex].score.dist && cumulativeScores[myCurrentStationIndex].score.dist.trim()}
+                                                                                        <li><span>Distance</span><span>{cumulativeScores[myCurrentStationIndex].score.dist}</span></li>
+                                                                                {/if}
+                                                                                {#if equipmentHistory.length}
+                                                                                        <li><span>Equipment</span><span>{equipmentHistory.join(', ')}</span></li>
+                                                                                {/if}
+                                                                                {#if cumulativeScores[myCurrentStationIndex].score.notes && cumulativeScores[myCurrentStationIndex].score.notes.trim()}
+                                                                                        <li class="notes-total"><span>Notes</span><span>{cumulativeScores[myCurrentStationIndex].score.notes}</span></li>
+                                                                                {/if}
+                                                                        </ul>
+                                                                </div>
+                                                        {/if}
+                                                </section>
+                                        {:else if isChipperMode}
+                                                <section class="score-card placeholder" aria-live="polite">
+                                                        <div class="placeholder-clock">
+                                                                <span class="clock-label">Time remaining</span>
+                                                                <span class="clock-time">{formatTime(liveState.remaining)}</span>
                                                         </div>
-                                                {:else}
-                                                        <p class="completion-hint">Log your finish to wrap up this session.</p>
-                                                        <button type="button" class="btn ghost" on:click={openCompletionModal}>Log finish</button>
-                                                {/if}
+                                                </section>
+                                        {:else}
+                                                <section class="score-card placeholder">
+                                                        <h2>Waiting for your station</h2>
+                                                        <p>We'll assign you to a station as soon as one opens up. Keep an eye on the timer above.</p>
+                                                </section>
                                         {/if}
-                                        <button
-                                                class="btn btn-primary"
-                                                on:click={startUpload}
-                                                disabled={finalSaveStatus === 'saving' || hasSavedFinalScore}
-                                        >
-                                                {hasSavedFinalScore ? 'Uploaded' : finalSaveStatus === 'saving' ? 'Uploading...' : 'End workout'}
-                                        </button>
-                                        {#if finalSaveMessage}
-                                                <p class={`status ${finalSaveStatus}`}>{finalSaveMessage}</p>
+
+                                        {#if liveState.isComplete}
+                                                <section class="post-workout-card" aria-live="polite">
+                                                        <h2>Workout complete</h2>
+                                                        <p>Upload your results to save them to your dashboard.</p>
+                                                        {#if requiresCompletionLog}
+                                                                {#if completionFinisherEntry || completionSummaryEntry}
+                                                                        <div class="completion-summary">
+                                                                                {#if completionFinisherEntry?.score?.cals}
+                                                                                        <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.cals} cal{completionFinisherEntry.score.cals === 1 ? '' : 's'}</strong></div>
+                                                                                {:else if completionFinisherEntry?.score?.reps}
+                                                                                        <div class="summary-line"><span>Finisher</span><strong>{completionFinisherEntry.score.reps} rep{completionFinisherEntry.score.reps === 1 ? '' : 's'}</strong></div>
+                                                                                {/if}
+                                                                                {#if completionSummaryEntry?.score?.notes}
+                                                                                        <div class="summary-line"><span>Progress</span><strong>{completionSummaryEntry.score.notes}</strong></div>
+                                                                                {/if}
+                                                                                <button type="button" class="btn btn-outline" on:click={openCompletionModal}>Edit result</button>
+                                                                        </div>
+                                                                {:else}
+                                                                        <p class="completion-hint">Log your finish to wrap up this session.</p>
+                                                                        <button type="button" class="btn ghost" on:click={openCompletionModal}>Log finish</button>
+                                                                {/if}
+                                                        {/if}
+                                                        <button
+                                                                class="btn btn-primary"
+                                                                on:click={startUpload}
+                                                                disabled={finalSaveStatus === 'saving' || hasSavedFinalScore}
+                                                        >
+                                                                {hasSavedFinalScore ? 'Uploaded' : finalSaveStatus === 'saving' ? 'Uploading...' : 'End workout'}
+                                                        </button>
+                                                        {#if finalSaveMessage}
+                                                                <p class={`status ${finalSaveStatus}`}>{finalSaveMessage}</p>
+                                                        {/if}
+                                                </section>
                                         {/if}
-                                </section>
+                                </main>
                         {/if}
-                </main>
                 </div>
-        </div>
-
         {#if showCompletionModal}
                 <div class="completion-overlay" role="dialog" aria-modal="true" aria-labelledby="completion-title">
                         <div class="completion-card">
@@ -2061,6 +2114,135 @@ function formatTime(s) {
 .amrap-name {
         margin: 0;
         font-weight: 600;
+}
+
+.amrap-simple-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1.25rem;
+        align-items: stretch;
+}
+
+.amrap-time-card,
+.amrap-move-card,
+.amrap-round-card {
+        background: var(--surface-1);
+        border: 1px solid var(--border-color);
+        border-radius: 18px;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        min-height: 100%;
+}
+
+.amrap-clock {
+        font-family: var(--font-display);
+        font-size: 4rem;
+        color: var(--brand-yellow);
+        margin: 0;
+}
+
+.amrap-move-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.8rem;
+}
+
+.amrap-move-list li {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+}
+
+.amrap-move-details {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+}
+
+.amrap-move-details strong {
+        font-size: 1.05rem;
+}
+
+.amrap-desc {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+}
+
+.amrap-round-controls {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(64px, 1fr));
+        gap: 0.5rem;
+        align-items: center;
+}
+
+.round-step {
+        background: var(--surface-2);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        color: var(--text-secondary);
+        font-size: 1.8rem;
+        font-weight: 700;
+        padding: 0.6rem;
+        cursor: pointer;
+        transition: transform 0.1s ease, border-color 0.1s ease;
+}
+
+.round-step:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+}
+
+.round-step:not(:disabled):hover,
+.round-step:not(:disabled):focus-visible {
+        transform: translateY(-1px);
+        border-color: var(--brand-yellow);
+        outline: none;
+}
+
+.amrap-round-display {
+        text-align: center;
+        font-family: var(--font-display);
+        font-size: 2.8rem;
+        color: var(--brand-yellow);
+        background: rgba(234, 179, 8, 0.08);
+        border: 1px solid rgba(234, 179, 8, 0.25);
+        border-radius: 16px;
+        padding: 0.75rem 0.5rem;
+}
+
+.extra-reps-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        margin-top: 0.5rem;
+}
+
+.extra-reps-field input {
+        background: var(--surface-2);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        color: var(--text-primary);
+        padding: 0.65rem 0.75rem;
+        font-size: 1rem;
+}
+
+.round-hint {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+}
+
+.eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin: 0;
 }
 
 .station-heading h2,
