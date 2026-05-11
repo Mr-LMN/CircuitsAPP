@@ -284,6 +284,35 @@ function handleEntryChange(index, field, rawValue) {
         }
 }
 
+function adjustEntryNumber(index, field, amount) {
+        if (index < 0 || !currentEntries[index]) return;
+
+        const current = Number(currentEntries[index].score[field]);
+        const nextValue = Math.max(0, (Number.isFinite(current) ? current : 0) + amount);
+        handleEntryChange(index, field, String(nextValue));
+}
+
+function adjustDistanceMeters(index, amount) {
+        if (index < 0 || !currentEntries[index]) return;
+
+        const currentDistance = String(currentEntries[index].score.dist || '').trim().toLowerCase();
+        let currentMeters = 0;
+
+        if (currentDistance.endsWith('km')) {
+                const value = Number(currentDistance.replace('km', '').trim());
+                currentMeters = Number.isFinite(value) ? value * 1000 : 0;
+        } else if (currentDistance.endsWith('m')) {
+                const value = Number(currentDistance.replace('m', '').trim());
+                currentMeters = Number.isFinite(value) ? value : 0;
+        } else {
+                const value = Number(currentDistance);
+                currentMeters = Number.isFinite(value) ? value : 0;
+        }
+
+        const nextMeters = Math.max(0, Math.round(currentMeters + amount));
+        handleEntryChange(index, 'dist', nextMeters > 0 ? `${nextMeters}m` : '');
+}
+
 function handleSelectionChange(index, option) {
         if (index < 0 || !currentEntries[index]) return;
 
@@ -1346,6 +1375,21 @@ function formatTime(s) {
                                                 {/if}
                                         </section>
 
+                                        <section class="workout-strip" aria-labelledby="workout-strip-title">
+                                                <div class="strip-header">
+                                                        <span id="workout-strip-title">All stations</span>
+                                                        <span>{workout.exercises.length} moves</span>
+                                                </div>
+                                                <ol>
+                                                        {#each workout.exercises as exercise, index}
+                                                                <li class:current={index === myCurrentStationIndex}>
+                                                                        <span class="strip-index">{index + 1}</span>
+                                                                        <span class="strip-name">{exercise.name}</span>
+                                                                </li>
+                                                        {/each}
+                                                </ol>
+                                        </section>
+
                                         {#if myStationData}
                                                 <section class="station-overview" aria-labelledby="station-now-title">
                                                         <div class="station-heading">
@@ -1579,7 +1623,13 @@ function formatTime(s) {
                                                                         placeholder="e.g. 12"
                                                                         value={currentEntries[myCurrentStationIndex].score.reps}
                                                                         on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
+                                                                        on:keydown={(event) => event.key === 'Enter' && commitStationScore(myCurrentStationIndex)}
                                                                 />
+                                                                <div class="quick-pad" aria-label="Quick add reps">
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'reps', 5)}>+5</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'reps', 10)}>+10</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'reps', -1)}>−1</button>
+                                                                </div>
                                                         </label>
                                                         <label class="input-field">
                                                                 <span>Weight (kg)</span>
@@ -1590,7 +1640,13 @@ function formatTime(s) {
                                                                         placeholder="e.g. 40"
                                                                         value={currentEntries[myCurrentStationIndex].score.weight}
                                                                         on:input={(event) => handleEntryChange(myCurrentStationIndex, 'weight', event.target.value)}
+                                                                        on:keydown={(event) => event.key === 'Enter' && commitStationScore(myCurrentStationIndex)}
                                                                 />
+                                                                <div class="quick-pad" aria-label="Quick adjust weight">
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'weight', 2.5)}>+2.5</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'weight', 5)}>+5</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'weight', -2.5)}>−2.5</button>
+                                                                </div>
                                                         </label>
                                                 {:else if metricCategory === 'Cardio Machine'}
                                                         <label class="input-field">
@@ -1602,7 +1658,13 @@ function formatTime(s) {
                                                                         placeholder="e.g. 20"
                                                                         value={currentEntries[myCurrentStationIndex].score.cals}
                                                                         on:input={(event) => handleEntryChange(myCurrentStationIndex, 'cals', event.target.value)}
+                                                                        on:keydown={(event) => event.key === 'Enter' && commitStationScore(myCurrentStationIndex)}
                                                                 />
+                                                                <div class="quick-pad" aria-label="Quick add calories">
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'cals', 5)}>+5</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'cals', 10)}>+10</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'cals', -1)}>−1</button>
+                                                                </div>
                                                         </label>
                                                         <label class="input-field">
                                                                 <span>Distance (m)</span>
@@ -1612,7 +1674,13 @@ function formatTime(s) {
                                                                         placeholder="e.g. 250m"
                                                                         value={currentEntries[myCurrentStationIndex].score.dist}
                                                                         on:input={(event) => handleEntryChange(myCurrentStationIndex, 'dist', event.target.value)}
+                                                                        on:keydown={(event) => event.key === 'Enter' && commitStationScore(myCurrentStationIndex)}
                                                                 />
+                                                                <div class="quick-pad" aria-label="Quick add distance">
+                                                                        <button type="button" on:click={() => adjustDistanceMeters(myCurrentStationIndex, 100)}>+100m</button>
+                                                                        <button type="button" on:click={() => adjustDistanceMeters(myCurrentStationIndex, 250)}>+250m</button>
+                                                                        <button type="button" on:click={() => adjustDistanceMeters(myCurrentStationIndex, -50)}>−50m</button>
+                                                                </div>
                                                         </label>
                                                 {:else}
                                                         <label class="input-field full">
@@ -1624,7 +1692,13 @@ function formatTime(s) {
                                                                         placeholder="e.g. 15"
                                                                         value={currentEntries[myCurrentStationIndex].score.reps}
                                                                         on:input={(event) => handleEntryChange(myCurrentStationIndex, 'reps', event.target.value)}
+                                                                        on:keydown={(event) => event.key === 'Enter' && commitStationScore(myCurrentStationIndex)}
                                                                 />
+                                                                <div class="quick-pad" aria-label="Quick add reps">
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'reps', 5)}>+5</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'reps', 10)}>+10</button>
+                                                                        <button type="button" on:click={() => adjustEntryNumber(myCurrentStationIndex, 'reps', -1)}>−1</button>
+                                                                </div>
                                                         </label>
                                                 {/if}
 
@@ -3220,4 +3294,336 @@ function formatTime(s) {
                 padding: 1.25rem;
         }
 }
+
+/* Compact mobile workout mode */
+.workout-strip {
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 0.9rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+}
+
+.strip-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+}
+
+.workout-strip ol {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+        gap: 0.4rem;
+}
+
+.workout-strip li {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        min-width: 0;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        border-radius: 999px;
+        padding: 0.3rem 0.5rem;
+        color: var(--text-secondary);
+        background: rgba(255, 255, 255, 0.04);
+}
+
+.workout-strip li.current {
+        border-color: rgba(253, 224, 71, 0.75);
+        background: rgba(253, 224, 71, 0.14);
+        color: var(--brand-yellow);
+}
+
+.strip-index {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.25rem;
+        height: 1.25rem;
+        border-radius: 999px;
+        flex: 0 0 auto;
+        font-size: 0.72rem;
+        font-weight: 800;
+        background: rgba(148, 163, 184, 0.18);
+}
+
+.strip-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.78rem;
+        font-weight: 700;
+}
+
+.quick-pad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.35rem;
+}
+
+.quick-pad button {
+        border: 1px solid rgba(253, 224, 71, 0.28);
+        border-radius: 10px;
+        background: rgba(253, 224, 71, 0.1);
+        color: var(--brand-yellow);
+        min-height: 34px;
+        font-weight: 800;
+        cursor: pointer;
+}
+
+@media (max-width: 720px) {
+        .tracker-container {
+                height: 100svh;
+                padding: 0.45rem;
+                gap: 0.45rem;
+        }
+
+        .tracker-layout,
+        .standard-content-grid {
+                gap: 0.45rem;
+        }
+
+        .standard-content-grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto minmax(0, 1fr);
+        }
+
+        .session-sidebar {
+                display: grid;
+                grid-template-columns: minmax(108px, 0.46fr) minmax(0, 1fr);
+                grid-template-areas:
+                        "timer strip"
+                        "now strip";
+                gap: 0.45rem;
+                overflow: hidden;
+                padding: 0;
+                border: none;
+                background: transparent;
+        }
+
+        .session-sidebar .timer-card {
+                grid-area: timer;
+        }
+
+        .workout-strip {
+                grid-area: strip;
+        }
+
+        .station-overview,
+        .workout-overview {
+                grid-area: now;
+        }
+
+        .timer-card,
+        .workout-strip,
+        .station-overview,
+        .score-card,
+        .pairing-summary,
+        .pairing-controls {
+                border-radius: 14px;
+                padding: 0.55rem;
+        }
+
+        .timer-card {
+                gap: 0.2rem;
+        }
+
+        .phase-label,
+        .station-eyebrow,
+        .score-eyebrow,
+        .selector-label,
+        .input-field span {
+                font-size: 0.62rem;
+                letter-spacing: 0.06em;
+        }
+
+        .time-display {
+                font-size: clamp(2.35rem, 13vw, 3.25rem);
+        }
+
+        .phase-meta,
+        .station-meta,
+        .task-list,
+        .station-next,
+        .equipment-options-list,
+        .score-helper,
+        .score-meta,
+        .score-rest-banner,
+        .start-callout,
+        .upcoming-note,
+        .rest-callout,
+        .pairing-status,
+        .pairing-note {
+                display: none;
+        }
+
+        .station-overview {
+                gap: 0.25rem;
+                min-height: 0;
+        }
+
+        .station-heading {
+                gap: 0.15rem;
+        }
+
+        .station-heading h2 {
+                font-size: 0.98rem;
+                line-height: 1.05;
+                overflow: hidden;
+                display: -webkit-box;
+                line-clamp: 2;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+        }
+
+        .workout-strip {
+                gap: 0.35rem;
+                min-height: 0;
+        }
+
+        .strip-header {
+                font-size: 0.58rem;
+        }
+
+        .workout-strip ol {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0.25rem;
+                overflow: hidden;
+        }
+
+        .workout-strip li {
+                padding: 0.22rem 0.35rem;
+                gap: 0.25rem;
+        }
+
+        .strip-index {
+                width: 1rem;
+                height: 1rem;
+                font-size: 0.6rem;
+        }
+
+        .strip-name {
+                font-size: 0.66rem;
+        }
+
+        .session-main {
+                overflow: hidden;
+                padding: 0;
+                border: none;
+                background: transparent;
+                gap: 0.45rem;
+        }
+
+        .score-card {
+                gap: 0.55rem;
+                max-height: 100%;
+                overflow: hidden;
+        }
+
+        .score-header {
+                gap: 0.35rem;
+        }
+
+        .score-title {
+                gap: 0.12rem;
+        }
+
+        .score-title h2 {
+                font-size: 1.15rem;
+                line-height: 1.05;
+        }
+
+        .score-subtitle {
+                font-size: 0.7rem;
+        }
+
+        .score-equipment-selector {
+                gap: 0.35rem;
+        }
+
+        .selector-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+                gap: 0.3rem;
+        }
+
+        .selector-grid label {
+                justify-content: center;
+                padding: 0.35rem 0.45rem;
+                font-size: 0.72rem;
+        }
+
+        .input-grid,
+        .input-grid.two-column {
+                margin-top: 0;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0.45rem;
+        }
+
+        .input-field {
+                gap: 0.25rem;
+        }
+
+        .input-field input,
+        .input-field textarea {
+                min-height: 42px;
+                border-radius: 10px;
+                padding: 0.35rem 0.5rem;
+                font-size: 1.2rem;
+        }
+
+        .notes-field {
+                display: none;
+        }
+
+        .quick-pad {
+                gap: 0.25rem;
+        }
+
+        .quick-pad button {
+                min-height: 30px;
+                border-radius: 8px;
+                font-size: 0.72rem;
+                padding: 0.1rem;
+        }
+
+        .actions-row {
+                margin-top: 0;
+        }
+
+        .btn-save {
+                padding: 0.68rem 1rem;
+                border-radius: 12px;
+        }
+
+        .totals {
+                margin-top: 0;
+                padding: 0.55rem;
+                gap: 0.25rem;
+        }
+
+        .totals h3 {
+                font-size: 0.68rem;
+        }
+
+        .totals ul {
+                gap: 0.2rem;
+        }
+
+        .totals li,
+        .totals li span:last-child {
+                font-size: 0.78rem;
+        }
+}
+
 </style>
