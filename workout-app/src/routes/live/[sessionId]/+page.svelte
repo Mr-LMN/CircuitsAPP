@@ -1113,7 +1113,7 @@ $: totalStations = workout.exercises?.length ?? 0;
 
 $: if (myScoreRef && userProfile.displayName && workout.mode !== 'Partner' && !hasJoinedRoster && rosterStatus === 'idle') {
         wantsPartnerPairing = true;
-        void joinStationRoster();
+        joinStationRoster().catch(err => console.error("Auto-join failed:", err));
 }
 
 $: if (
@@ -1124,7 +1124,7 @@ $: if (
         !hasJoinedRoster &&
         rosterStatus === 'idle'
 ) {
-        void joinStationRoster({ trainingSolo: false });
+        joinStationRoster({ trainingSolo: false }).catch(err => console.error("Auto-join partner failed:", err));
 }
 
 $: if (
@@ -2964,43 +2964,9 @@ function formatTime(s) {
         grid-column: 1 / -1;
 }
 
-.input-field span {
-        font-size: 0.8rem;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-}
 
-.input-field input,
-.input-field textarea {
-        font-size: 1.15rem;
-        font-family: var(--font-display);
-        width: 100%;
-        border-radius: 12px;
-        border: 1px solid var(--border-color);
-        background: var(--deep-space);
-        color: var(--text-primary);
-        padding: 0.55rem 0.75rem;
-        text-align: center;
-}
 
-.input-field textarea {
-        font-size: 0.95rem;
-        font-family: var(--font-body);
-        line-height: 1.5;
-        min-height: 64px;
-        resize: vertical;
-        text-align: left;
-}
 
-.notes-field span {
-        text-transform: none;
-        letter-spacing: normal;
-}
-
-.notes-field textarea {
-        background: rgba(15, 23, 42, 0.85);
-}
 
 .actions-row {
         margin-top: 1.5rem;
