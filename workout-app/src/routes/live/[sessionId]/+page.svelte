@@ -2799,35 +2799,6 @@ function formatTime(s) {
         cursor: not-allowed;
 }
 
-.selector-grid {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-}
-
-.selector-grid label {
-        border: 1px solid var(--border-color);
-        border-radius: 999px;
-        padding: 0.4rem 0.75rem;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        cursor: pointer;
-        color: var(--text-muted);
-        font-size: 0.85rem;
-        transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
-
-.selector-grid label.active {
-        background: var(--brand-yellow);
-        border-color: var(--brand-yellow);
-        color: var(--bg-main);
-}
-
-.selector-grid label input {
-        display: none;
-}
-
 .score-card.placeholder {
         align-items: center;
         justify-content: center;
@@ -2879,24 +2850,12 @@ function formatTime(s) {
         flex-wrap: wrap;
 }
 
-.score-title {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-}
-
 .score-eyebrow {
         font-size: 0.75rem;
         font-weight: 600;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--text-muted);
-}
-
-.score-title h2 {
-        margin: 0;
-        font-size: 1.75rem;
-        color: var(--text-secondary);
 }
 
 .score-subtitle {

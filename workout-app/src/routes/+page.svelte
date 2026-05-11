@@ -6,27 +6,27 @@
 		signInWithEmailAndPassword,
 		signOut
 	} from 'firebase/auth';
-        import { user } from '$lib/store';
-        import { page } from '$app/stores';
+	import { user } from '$lib/store';
+	import { page } from '$app/stores';
 
 	let email = '';
 	let password = '';
 	let errorMessage = '';
-        let isNewUser = false;
-        let initializedFromQuery = false;
-        let redirectUrl = '/dashboard';
+	let isNewUser = false;
+	let initializedFromQuery = false;
+	let redirectUrl = '/dashboard';
 
-        $: if (!initializedFromQuery) {
-                const signupParam = $page.url.searchParams.get('signup');
-                const redirectParam = $page.url.searchParams.get('redirect');
-                if (redirectParam) {
-                        redirectUrl = redirectParam;
-                }
-                if (signupParam === '1') {
-                        isNewUser = true;
-                }
-                initializedFromQuery = true;
-        }
+	$: if (!initializedFromQuery) {
+		const signupParam = $page.url.searchParams.get('signup');
+		const redirectParam = $page.url.searchParams.get('redirect');
+		if (redirectParam) {
+			redirectUrl = redirectParam;
+		}
+		if (signupParam === '1') {
+			isNewUser = true;
+		}
+		initializedFromQuery = true;
+	}
 
 	async function handleSubmit() {
 		if (!email || !password) {
@@ -50,13 +50,13 @@
 	}
 
 	const dashboardUrl = resolve(/** @type {any} */ ('/dashboard'));
-    import { goto } from '$app/navigation';
-$: if ($user && redirectUrl) {
-    // Only redirect automatically if we came from a join link
-    if (redirectUrl !== '/dashboard') {
-        goto(resolve(redirectUrl));
-    }
-}
+	import { goto } from '$app/navigation';
+	$: if ($user && redirectUrl) {
+		// Only redirect automatically if we came from a join link
+		if (redirectUrl !== '/dashboard') {
+			goto(resolve(/** @type {any} */ (redirectUrl)));
+		}
+	}
 </script>
 
 <main class="auth-page">
