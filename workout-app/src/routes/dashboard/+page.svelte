@@ -244,12 +244,21 @@
 				Your next class, recent benchmarks and coach actions are now in one cleaner place.
 			</p>
 		</div>
-		{#if $isAdmin}
-			<div class="hero-actions" aria-label="Coach shortcuts">
-				<a href={resolve('/admin/create')} class="quick-action primary">Create workout</a>
-				<a href={resolve('/admin/sessions')} class="quick-action">Schedule class</a>
-			</div>
-		{/if}
+		<div class="hero-panel">
+			<span class="hero-panel-label">Next class</span>
+			<strong>{upcomingSession ? nextSessionDateLabel : 'No session'}</strong>
+			<span
+				>{upcomingSession
+					? `${nextSessionTimeLabel || 'Time TBC'} · ${nextSessionCount} booked`
+					: 'Create a class to get started'}</span
+			>
+			{#if $isAdmin}
+				<div class="hero-actions" aria-label="Coach shortcuts">
+					<a href={resolve('/admin/create')} class="quick-action primary">Create workout</a>
+					<a href={resolve('/admin/sessions')} class="quick-action">Schedule class</a>
+				</div>
+			{/if}
+		</div>
 	</header>
 
 	{#if isLoading}
@@ -420,19 +429,37 @@
 	.dashboard-hero,
 	.dashboard-section,
 	.metric-card {
-		border: 1px solid var(--border-color);
-		background: rgba(15, 23, 42, 0.68);
-		box-shadow: var(--shadow-card);
-		backdrop-filter: blur(18px);
+		border: 1px solid rgba(226, 232, 240, 0.14);
+		background: linear-gradient(145deg, rgba(15, 23, 42, 0.82), rgba(30, 41, 59, 0.58));
+		box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
+		backdrop-filter: blur(20px);
 	}
 
 	.dashboard-hero {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 1.5rem;
-		padding: clamp(1.4rem, 4vw, 2.4rem);
+		position: relative;
+		overflow: hidden;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(280px, 390px);
+		align-items: stretch;
+		gap: clamp(1rem, 3vw, 2rem);
+		padding: clamp(1.4rem, 4vw, 2.6rem);
 		border-radius: var(--radius-xl);
+	}
+
+	.dashboard-hero::before {
+		position: absolute;
+		inset: -20% auto auto 45%;
+		width: 34rem;
+		height: 34rem;
+		border-radius: 999px;
+		background: radial-gradient(circle, rgba(250, 204, 21, 0.18), transparent 62%);
+		content: '';
+		pointer-events: none;
+	}
+
+	.dashboard-hero > * {
+		position: relative;
+		z-index: 1;
 	}
 
 	.eyebrow {
@@ -461,6 +488,33 @@
 		margin-top: 0.9rem;
 		color: var(--text-secondary);
 		font-size: clamp(1rem, 2vw, 1.15rem);
+	}
+
+	.hero-panel {
+		display: grid;
+		align-content: center;
+		gap: 0.55rem;
+		padding: 1.2rem;
+		border: 1px solid rgba(250, 204, 21, 0.18);
+		border-radius: 24px;
+		background: rgba(2, 6, 23, 0.38);
+	}
+
+	.hero-panel-label {
+		color: var(--brand-yellow);
+		font-size: 0.75rem;
+		font-weight: 900;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+	}
+
+	.hero-panel strong {
+		font-size: clamp(1.3rem, 3vw, 2rem);
+		line-height: 1.05;
+	}
+
+	.hero-panel span:last-of-type {
+		color: var(--text-secondary);
 	}
 
 	.hero-actions,
@@ -507,10 +561,23 @@
 	}
 
 	.metric-card {
+		position: relative;
+		overflow: hidden;
 		display: grid;
 		gap: 0.35rem;
 		padding: 1.25rem;
 		border-radius: var(--radius-lg);
+	}
+
+	.metric-card::after {
+		position: absolute;
+		right: -2.5rem;
+		top: -2.5rem;
+		width: 8rem;
+		height: 8rem;
+		border-radius: 999px;
+		background: rgba(56, 189, 248, 0.1);
+		content: '';
 	}
 
 	.metric-card strong {
@@ -586,9 +653,9 @@
 		justify-content: space-between;
 		gap: 1.25rem;
 		padding: clamp(1rem, 3vw, 1.4rem);
-		border: 1px solid var(--border-color);
-		border-radius: var(--radius-lg);
-		background: rgba(255, 255, 255, 0.07);
+		border: 1px solid rgba(226, 232, 240, 0.14);
+		border-radius: 24px;
+		background: rgba(2, 6, 23, 0.35);
 	}
 
 	.session-card.today {
@@ -628,9 +695,9 @@
 		gap: 0.45rem;
 		min-height: 150px;
 		padding: 1rem;
-		border: 1px solid var(--border-color);
+		border: 1px solid rgba(226, 232, 240, 0.14);
 		border-radius: var(--radius-lg);
-		background: rgba(255, 255, 255, 0.07);
+		background: rgba(2, 6, 23, 0.35);
 		text-decoration: none;
 		transition:
 			transform var(--transition),
