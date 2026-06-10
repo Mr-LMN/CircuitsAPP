@@ -11,7 +11,7 @@ $: sessionId = $page.params.sessionId;
 $: if (!hasRedirected && !$loading && sessionId) {
         hasRedirected = true;
         if ($user) {
-                goto(resolve(`/dashboard?session=${sessionId}`));
+                goto(resolve(`/live/${sessionId}`));
         } else {
                 goto(resolve('/?signup=1'));
         }
