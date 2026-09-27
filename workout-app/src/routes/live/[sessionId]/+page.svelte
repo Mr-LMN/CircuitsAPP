@@ -7,6 +7,8 @@
 		serialiseStationAssignments
 	} from '$lib/stationAssignments';
 	import { buildChipperGroups } from '$lib/chipper';
+	import { deriveRemaining } from '$lib/liveTimer';
+	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import {
 		doc,
 		onSnapshot,
@@ -76,6 +78,9 @@
 
 	let myScoreRef = null;
 	let unsubscribe = [];
+	let connectionStatus = 'reconnecting';
+	let localClockId = null;
+	let lastPhaseKey = '';
 
 	const createEntryScore = () => ({
 		reps: '',
@@ -320,11 +325,28 @@
 		});
 
 		const liveStateRef = doc(db, 'sessions', session.id, 'liveState', 'data');
-		const unsubState = onSnapshot(liveStateRef, (docSnap) => {
-			if (docSnap.exists()) {
-				liveState = docSnap.data();
+		const unsubState = onSnapshot(
+			liveStateRef,
+			{ includeMetadataChanges: true },
+			(docSnap) => {
+				connectionStatus = !navigator.onLine
+					? 'offline'
+					: docSnap.metadata.fromCache
+						? 'reconnecting'
+						: 'connected';
+				if (docSnap.exists()) {
+					const incoming = docSnap.data();
+					const phaseKey = `${incoming.phaseIndex ?? ''}-${incoming.currentRound ?? ''}-${incoming.currentStation ?? ''}`;
+					if (lastPhaseKey && phaseKey !== lastPhaseKey && navigator.vibrate) navigator.vibrate(40);
+					lastPhaseKey = phaseKey;
+					liveState = { ...incoming, remaining: deriveRemaining(incoming) };
+				}
+			},
+			(error) => {
+				console.error('Live timer connection interrupted', error);
+				connectionStatus = navigator.onLine ? 'reconnecting' : 'offline';
 			}
-		});
+		);
 
 		const unsubScore = onSnapshot(myScoreRef, (docSnap) => {
 			const didJoin = docSnap.exists();
@@ -344,8 +366,20 @@
 		});
 
 		unsubscribe = [unsubProfile, unsubState, unsubScore];
+		localClockId = window.setInterval(() => {
+			if (liveState?.isRunning) liveState = { ...liveState, remaining: deriveRemaining(liveState) };
+		}, 250);
+		const handleOffline = () => (connectionStatus = 'offline');
+		const handleOnline = () => (connectionStatus = 'reconnecting');
+		window.addEventListener('offline', handleOffline);
+		window.addEventListener('online', handleOnline);
 
-		return () => unsubscribe.forEach((unsub) => unsub && unsub());
+		return () => {
+			unsubscribe.forEach((unsub) => unsub && unsub());
+			window.clearInterval(localClockId);
+			window.removeEventListener('offline', handleOffline);
+			window.removeEventListener('online', handleOnline);
+		};
 	});
 
 	function setEntryScore(index, newScore) {
@@ -1413,6 +1447,7 @@
 
 <div class="tracker-container">
 	<div class="tracker-shell">
+		<div class="connection-row"><ConnectionStatus status={connectionStatus} /></div>
 		<div class="tracker-layout" class:chipper={isChipperMode}>
 			{#if isChipperMode}
 				<section class="timer-card" aria-live="polite">
@@ -2182,6 +2217,11 @@
 	.tracker-shell {
 		width: min(1640px, 100%);
 		margin: 0 auto;
+	}
+	.connection-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-bottom: 0.65rem;
 	}
 
 	.tracker-layout {
