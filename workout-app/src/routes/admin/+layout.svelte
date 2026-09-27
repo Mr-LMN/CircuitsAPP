@@ -1,17 +1,17 @@
 <script>
-	import { user, loading } from '$lib/store';
+	import { user, loading, isAdmin } from '$lib/store';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 
 	// This is a "reactive statement". It will re-run whenever
 	// the value of 'loading' or 'user' changes.
-	$: if (!$loading && !$user) {
-		goto(resolve('/')); // If loading is done and there's no user, redirect.
+	$: if (!$loading && (!$user || !$isAdmin)) {
+		goto(resolve('/dashboard'));
 	}
 </script>
 
-{#if $user}
+{#if $user && $isAdmin}
 	<slot />
 {:else}
-	<p>Verifying access...</p>
+	<p role="status">Verifying coach access...</p>
 {/if}

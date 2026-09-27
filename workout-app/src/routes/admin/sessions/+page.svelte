@@ -20,7 +20,7 @@
 	let allWorkouts = [];
 	let upcomingSessions = [];
 	let pastSessions = [];
-	let newSession = { date: '', workoutId: '' };
+	let newSession = { date: '', workoutId: '', capacity: '' };
 	let isLoading = true;
 	let isSubmitting = false;
 	let searchTerm = '';
@@ -44,24 +44,30 @@
 		}
 
 		try {
+			const chunks = [];
+			for (let index = 0; index < sessionIds.length; index += 30) {
+				chunks.push(sessionIds.slice(index, index + 30));
+			}
 			const attendanceSnapshots = await Promise.all(
-				sessionIds.map((id) =>
+				chunks.map((ids) =>
 					getDocs(
 						query(
 							collection(db, 'attendance'),
 							...(creatorId ? [where('creatorId', '==', creatorId)] : []),
-							where('sessionId', '==', id)
+							where('sessionId', 'in', ids)
 						)
 					)
 				)
 			);
 
-			attendanceSnapshots.forEach((snapshot, index) => {
-				const sessionId = sessionIds[index];
-				attendanceMap.set(
-					sessionId,
-					snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-				);
+			sessionIds.forEach((sessionId) => attendanceMap.set(sessionId, []));
+			attendanceSnapshots.forEach((snapshot) => {
+				snapshot.docs.forEach((docSnap) => {
+					const record = { id: docSnap.id, ...docSnap.data() };
+					if (record.sessionId && attendanceMap.has(record.sessionId)) {
+						attendanceMap.get(record.sessionId).push(record);
+					}
+				});
 			});
 		} catch (error) {
 			console.error('Failed to fetch attendance records for sessions', error);
@@ -203,12 +209,15 @@
 				sessionDate: formatDate(newSession.date),
 				workoutId: selectedWorkout.id,
 				workoutTitle: selectedWorkout.title,
+				...(Number(newSession.capacity) > 0
+					? { capacity: Math.floor(Number(newSession.capacity)) }
+					: {}),
 				rsvps: [],
 				attendance: [],
 				createdAt: serverTimestamp()
 			};
 			await addDoc(collection(db, 'sessions'), sessionData);
-			newSession = { date: '', workoutId: '' };
+			newSession = { date: '', workoutId: '', capacity: '' };
 		} catch (error) {
 			console.error('Error creating session:', error);
 			alert('Failed to create session.');
@@ -266,6 +275,17 @@
 						<option value={workout.id}>{workout.title}</option>
 					{/each}
 				</select>
+			</div>
+			<div class="form-group">
+				<label for="capacity">Capacity <span>(optional)</span></label>
+				<input
+					id="capacity"
+					type="number"
+					min="1"
+					inputmode="numeric"
+					bind:value={newSession.capacity}
+					placeholder="Unlimited"
+				/>
 			</div>
 			<button type="submit" class="primary-btn" disabled={isSubmitting}>
 				{isSubmitting ? 'Creating...' : 'Create Session'}

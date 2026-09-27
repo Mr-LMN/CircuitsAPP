@@ -11,10 +11,9 @@
 		orderBy,
 		limit,
 		doc,
-		updateDoc,
-		arrayUnion,
-		arrayRemove,
-		getDoc
+		getDoc,
+		runTransaction,
+		serverTimestamp
 	} from 'firebase/firestore';
 	import { isAdmin, loading, user } from '$lib/store';
 
@@ -25,6 +24,8 @@
 	let isBooking = false;
 	let isLoading = true;
 	let loadError = '';
+	let bookingMessage = '';
+	let bookingMessageType = 'idle';
 
 	let lastLoadedUid = null;
 	let fetchToken = 0;
@@ -66,7 +67,7 @@
 					collection(db, 'sessions'),
 					where('sessionDate', '>=', startOfToday),
 					orderBy('sessionDate', 'asc'),
-					limit(1)
+					limit(25)
 				)
 			);
 			const profileQuery = getDoc(doc(db, 'profiles', uid));
@@ -93,7 +94,24 @@
 			userProfile = profileSnap.exists() ? profileSnap.data() : null;
 
 			if (!sessionsSnapshot.empty) {
-				const sessionDoc = sessionsSnapshot.docs[0];
+				const candidates = sessionsSnapshot.docs;
+				const organisationId = userProfile?.organisationId ?? null;
+				const booked = candidates.find((candidate) =>
+					(candidate.data().rsvps ?? []).some((rsvp) => rsvp.userId === uid)
+				);
+				const coached = $isAdmin
+					? candidates.find((candidate) => candidate.data().creatorId === uid)
+					: null;
+				const sameOrganisation = organisationId
+					? candidates.find((candidate) => candidate.data().organisationId === organisationId)
+					: null;
+				const legacy = candidates.find((candidate) => !candidate.data().organisationId);
+				const sessionDoc = booked ?? coached ?? sameOrganisation ?? legacy ?? null;
+				if (!sessionDoc) {
+					upcomingSession = null;
+					hasBooked = false;
+					return;
+				}
 				const sessionData = sessionDoc.data();
 				const sessionDate = normaliseDate(sessionData.sessionDate);
 
@@ -158,6 +176,8 @@
 	$: attendanceTotal = stats.sessionsAttended;
 	$: benchmarkTotal = stats.personalBests.length;
 	$: nextSessionCount = upcomingSession?.rsvps?.length ?? 0;
+	$: sessionCapacity = Math.max(0, Number(upcomingSession?.capacity) || 0);
+	$: isSessionFull = sessionCapacity > 0 && nextSessionCount >= sessionCapacity && !hasBooked;
 	$: nextSessionDateLabel = upcomingSession?.sessionDate
 		? upcomingSession.sessionDate.toLocaleDateString('en-GB', {
 				weekday: 'long',
@@ -193,18 +213,39 @@
 		if (!currentUser?.uid) return;
 
 		isBooking = true;
+		bookingMessage = '';
 		try {
 			const sessionRef = doc(db, 'sessions', upcomingSession.id);
-			await updateDoc(sessionRef, {
-				rsvps: arrayUnion({
-					userId: currentUser.uid,
-					displayName: userProfile.displayName
-				})
+			const rsvpRef = doc(db, 'sessions', upcomingSession.id, 'rsvps', currentUser.uid);
+			await runTransaction(db, async (transaction) => {
+				const snapshot = await transaction.get(sessionRef);
+				if (!snapshot.exists()) throw new Error('Session no longer exists.');
+				const data = snapshot.data();
+				const existing = Array.isArray(data.rsvps) ? data.rsvps : [];
+				if (existing.some((rsvp) => rsvp.userId === currentUser.uid)) return;
+				const capacity = Math.max(0, Number(data.capacity) || 0);
+				if (capacity > 0 && existing.length >= capacity) throw new Error('SESSION_FULL');
+				const rsvp = { userId: currentUser.uid, displayName: userProfile.displayName || 'Member' };
+				transaction.update(sessionRef, { rsvps: [...existing, rsvp] });
+				transaction.set(rsvpRef, { ...rsvp, bookedAt: serverTimestamp() });
 			});
 			hasBooked = true;
+			upcomingSession = {
+				...upcomingSession,
+				rsvps: [
+					...(upcomingSession.rsvps ?? []),
+					{ userId: currentUser.uid, displayName: userProfile.displayName || 'Member' }
+				]
+			};
+			bookingMessageType = 'success';
+			bookingMessage = 'Your place is booked.';
 		} catch (error) {
 			console.error('Error booking spot:', error);
-			alert('Could not book your spot. Please try again.');
+			bookingMessageType = 'error';
+			bookingMessage =
+				error instanceof Error && error.message === 'SESSION_FULL'
+					? 'Session full — no places are currently available.'
+					: 'Could not book your spot. Please try again.';
 		} finally {
 			isBooking = false;
 		}
@@ -217,18 +258,30 @@
 		if (!currentUser?.uid) return;
 
 		isBooking = true;
+		bookingMessage = '';
 		try {
 			const sessionRef = doc(db, 'sessions', upcomingSession.id);
-			await updateDoc(sessionRef, {
-				rsvps: arrayRemove({
-					userId: currentUser.uid,
-					displayName: userProfile.displayName
-				})
+			const rsvpRef = doc(db, 'sessions', upcomingSession.id, 'rsvps', currentUser.uid);
+			await runTransaction(db, async (transaction) => {
+				const snapshot = await transaction.get(sessionRef);
+				if (!snapshot.exists()) return;
+				const existing = Array.isArray(snapshot.data().rsvps) ? snapshot.data().rsvps : [];
+				transaction.update(sessionRef, {
+					rsvps: existing.filter((rsvp) => rsvp.userId !== currentUser.uid)
+				});
+				transaction.delete(rsvpRef);
 			});
 			hasBooked = false;
+			upcomingSession = {
+				...upcomingSession,
+				rsvps: (upcomingSession.rsvps ?? []).filter((rsvp) => rsvp.userId !== currentUser.uid)
+			};
+			bookingMessageType = 'success';
+			bookingMessage = 'Booking cancelled.';
 		} catch (error) {
 			console.error('Error cancelling booking:', error);
-			alert('Could not cancel your booking. Please try again.');
+			bookingMessageType = 'error';
+			bookingMessage = 'Could not cancel your booking. Please try again.';
 		} finally {
 			isBooking = false;
 		}
@@ -306,7 +359,9 @@
 								<h3 class="session-title">{upcomingSession.workoutTitle}</h3>
 								<div class="session-meta">
 									<span>{nextSessionTimeLabel || 'Time TBC'}</span>
-									<span>{nextSessionCount} booked</span>
+									<span
+										>{nextSessionCount}{sessionCapacity ? `/${sessionCapacity}` : ''} booked</span
+									>
 									<span
 										>{isSessionToday
 											? 'Ready for check-in'
@@ -327,12 +382,25 @@
 										{isBooking ? 'Updating...' : 'Cancel booking'}
 									</button>
 								{:else}
-									<button class="primary-btn" on:click={bookSpot} disabled={isBooking}>
-										{isBooking ? 'Booking...' : 'Book my spot'}
+									<button
+										class="primary-btn"
+										on:click={bookSpot}
+										disabled={isBooking || isSessionFull}
+									>
+										{isBooking ? 'Booking...' : isSessionFull ? 'Session full' : 'Book my spot'}
 									</button>
 								{/if}
 							</div>
 						</div>
+						{#if bookingMessage}
+							<p
+								class:booking-error={bookingMessageType === 'error'}
+								class="booking-message"
+								role="status"
+							>
+								{bookingMessage}
+							</p>
+						{/if}
 					{:else}
 						<div class="empty-state rich">
 							<strong>No upcoming sessions yet.</strong>
@@ -803,6 +871,15 @@
 		color: var(--error);
 		background: rgba(251, 113, 133, 0.08);
 		text-align: center;
+	}
+
+	.booking-message {
+		margin-top: 0.8rem;
+		color: var(--success);
+		font-weight: 800;
+	}
+	.booking-message.booking-error {
+		color: var(--error);
 	}
 
 	@media (max-width: 900px) {

@@ -1,6 +1,6 @@
 <script>
 	import { resolve } from '$app/paths';
-	import { auth } from '$lib/firebase';
+	import { auth, isFirebaseConfigured, missingFirebaseVariables } from '$lib/firebase';
 	import {
 		createUserWithEmailAndPassword,
 		signInWithEmailAndPassword,
@@ -19,7 +19,7 @@
 	$: if (!initializedFromQuery) {
 		const signupParam = $page.url.searchParams.get('signup');
 		const redirectParam = $page.url.searchParams.get('redirect');
-		if (redirectParam) {
+		if (redirectParam?.startsWith('/') && !redirectParam.startsWith('//')) {
 			redirectUrl = redirectParam;
 		}
 		if (signupParam === '1') {
@@ -29,6 +29,10 @@
 	}
 
 	async function handleSubmit() {
+		if (!isFirebaseConfigured) {
+			errorMessage = 'Firebase is not configured yet. Add the environment values listed above.';
+			return;
+		}
 		if (!email || !password) {
 			errorMessage = 'Email and password are required.';
 			return;
@@ -70,6 +74,12 @@
 	{:else}
 		<div class="auth-card">
 			<h1>{isNewUser ? 'Create Account' : 'Sign In'}</h1>
+			{#if !isFirebaseConfigured}
+				<div class="setup-notice" role="alert">
+					<strong>Setup needed</strong>
+					<span>Add these values to <code>.env</code>: {missingFirebaseVariables.join(', ')}</span>
+				</div>
+			{/if}
 			<p>
 				{isNewUser ? 'Already have an account?' : 'Need an account?'}
 				<button class="link-btn" on:click={() => (isNewUser = !isNewUser)}>
@@ -91,10 +101,37 @@
 					<p class="error-message">{errorMessage}</p>
 				{/if}
 
-				<button type="submit" class="primary-btn">
+				<button type="submit" class="primary-btn" disabled={!isFirebaseConfigured}>
 					{isNewUser ? 'Create Account' : 'Sign In'}
 				</button>
 			</form>
 		</div>
 	{/if}
 </main>
+
+<style>
+	.setup-notice {
+		position: relative;
+		display: grid;
+		gap: 0.25rem;
+		margin-bottom: 1.25rem;
+		padding: 0.9rem 1rem;
+		border: 1px solid rgba(250, 204, 21, 0.35);
+		border-radius: var(--radius-md);
+		background: rgba(250, 204, 21, 0.09);
+		color: var(--text-secondary);
+		font-size: 0.86rem;
+	}
+
+	.setup-notice strong {
+		color: var(--brand-yellow);
+	}
+
+	.setup-notice span {
+		overflow-wrap: anywhere;
+	}
+
+	.setup-notice code {
+		color: var(--text-primary);
+	}
+</style>

@@ -4,14 +4,28 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
-// Your web app's Firebase configuration
+const requiredEnvironmentVariables = [
+	'VITE_API_KEY',
+	'VITE_AUTH_DOMAIN',
+	'VITE_PROJECT_ID',
+	'VITE_APP_ID'
+];
+
+export const missingFirebaseVariables = requiredEnvironmentVariables.filter(
+	(key) => !String(import.meta.env[key] ?? '').trim()
+);
+export const isFirebaseConfigured = missingFirebaseVariables.length === 0;
+
+// Firebase validates configuration as soon as Auth is created. Development and
+// preview builds should still render a useful setup screen when no .env exists,
+// so harmless local placeholders are used until real values are supplied.
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_API_KEY,
-  authDomain: import.meta.env.VITE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_APP_ID
+	apiKey: import.meta.env.VITE_API_KEY || 'local-development-key',
+	authDomain: import.meta.env.VITE_AUTH_DOMAIN || 'localhost',
+	projectId: import.meta.env.VITE_PROJECT_ID || 'circuits-app-local',
+	storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+	messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+	appId: import.meta.env.VITE_APP_ID || '1:000000000000:web:local'
 };
 
 // Initialize Firebase
