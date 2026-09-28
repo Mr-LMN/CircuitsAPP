@@ -26,14 +26,21 @@ service cloud.firestore {
       allow read: if signedIn() && sameOrganisation(resource.data);
       allow create: if admin() && request.resource.data.creatorId == request.auth.uid;
       allow delete: if admin() && owns(resource.data);
-      // Participant RSVP updates remain compatible with the legacy array model,
-      // but participants cannot change the session's remaining fields.
-      allow update: if admin() && owns(resource.data)
-        || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rsvps']));
+      allow update: if admin() && owns(resource.data);
 
       match /rsvps/{userId} {
         allow read: if signedIn();
-        allow create, update, delete: if signedIn() && (userId == request.auth.uid || admin());
+        allow create, update: if signedIn() && (admin() || (userId == request.auth.uid && request.resource.data.userId == request.auth.uid));
+        allow delete: if signedIn() && (userId == request.auth.uid || admin());
+      }
+      match /bookingSlots/{slotId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && !exists(/databases/$(database)/documents/sessions/$(sessionId)/bookingSlots/$(slotId))
+          && request.resource.data.userId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/sessions/$(sessionId)/rsvps/$(request.auth.uid)).data.slot == int(slotId);
+        allow delete: if signedIn() && (resource.data.userId == request.auth.uid || admin());
+        allow update: if false;
       }
       match /attendees/{userId} {
         allow read: if signedIn();

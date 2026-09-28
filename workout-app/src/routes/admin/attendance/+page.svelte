@@ -11,6 +11,7 @@ let profiles = [];
 let todaysAttendees = new SvelteSet(); // A Set for quick lookups of who has attended today
 let isLoading = true;
 let searchTerm = '';
+let actionMessage = '';
 
 // This function runs when the page loads
 onMount(async () => {
@@ -72,7 +73,7 @@ todaysAttendees = todaysAttendees;
 
 } catch (error) {
 console.error("Error checking in:", error);
-alert("Could not check in the user. Please try again.");
+actionMessage = 'Could not check in the user. Please try again.';
 } finally {
 profile.isCheckingIn = false;
 profiles = profiles;
@@ -91,6 +92,7 @@ p.displayName?.toLowerCase().includes(searchTerm.toLowerCase())
 <div class="search-bar">
 <input type="text" bind:value={searchTerm} placeholder="Search by name..." />
 </div>
+{#if actionMessage}<p class="error-message" role="status">{actionMessage}</p>{/if}
 </div>
 
 {#if isLoading}

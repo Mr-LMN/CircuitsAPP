@@ -116,10 +116,15 @@
 				const sessionDate = normaliseDate(sessionData.sessionDate);
 
 				if (sessionDate) {
+					const rsvpSnapshot = await getDocs(collection(db, 'sessions', sessionDoc.id, 'rsvps'));
+					const legacyRsvps = Array.isArray(sessionData.rsvps) ? sessionData.rsvps : [];
+					const rsvpByUser = new Map(legacyRsvps.map((rsvp) => [rsvp.userId, rsvp]));
+					rsvpSnapshot.docs.forEach((rsvpDoc) => rsvpByUser.set(rsvpDoc.id, rsvpDoc.data()));
 					upcomingSession = {
 						id: sessionDoc.id,
 						...sessionData,
-						sessionDate
+						sessionDate,
+						rsvps: [...rsvpByUser.values()]
 					};
 					hasBooked = Boolean(upcomingSession.rsvps?.some((rsvp) => rsvp.userId === uid));
 				} else {
@@ -222,12 +227,28 @@
 				if (!snapshot.exists()) throw new Error('Session no longer exists.');
 				const data = snapshot.data();
 				const existing = Array.isArray(data.rsvps) ? data.rsvps : [];
-				if (existing.some((rsvp) => rsvp.userId === currentUser.uid)) return;
+				const ownRsvp = await transaction.get(rsvpRef);
+				if (ownRsvp.exists() || existing.some((rsvp) => rsvp.userId === currentUser.uid)) return;
 				const capacity = Math.max(0, Number(data.capacity) || 0);
-				if (capacity > 0 && existing.length >= capacity) throw new Error('SESSION_FULL');
+				let slot = null;
+				if (capacity > 0) {
+					const availableSlots = Math.max(0, capacity - existing.length);
+					for (let index = 0; index < availableSlots; index += 1) {
+						const slotRef = doc(db, 'sessions', upcomingSession.id, 'bookingSlots', String(index));
+						const slotSnapshot = await transaction.get(slotRef);
+						if (!slotSnapshot.exists() && !slot) slot = { index, ref: slotRef };
+					}
+					if (!slot) throw new Error('SESSION_FULL');
+				}
 				const rsvp = { userId: currentUser.uid, displayName: userProfile.displayName || 'Member' };
-				transaction.update(sessionRef, { rsvps: [...existing, rsvp] });
-				transaction.set(rsvpRef, { ...rsvp, bookedAt: serverTimestamp() });
+				if (slot)
+					transaction.set(slot.ref, { userId: currentUser.uid, claimedAt: serverTimestamp() });
+				transaction.set(rsvpRef, {
+					...rsvp,
+					sessionId: upcomingSession.id,
+					slot: slot?.index ?? null,
+					bookedAt: serverTimestamp()
+				});
 			});
 			hasBooked = true;
 			upcomingSession = {
@@ -260,15 +281,14 @@
 		isBooking = true;
 		bookingMessage = '';
 		try {
-			const sessionRef = doc(db, 'sessions', upcomingSession.id);
 			const rsvpRef = doc(db, 'sessions', upcomingSession.id, 'rsvps', currentUser.uid);
 			await runTransaction(db, async (transaction) => {
-				const snapshot = await transaction.get(sessionRef);
-				if (!snapshot.exists()) return;
-				const existing = Array.isArray(snapshot.data().rsvps) ? snapshot.data().rsvps : [];
-				transaction.update(sessionRef, {
-					rsvps: existing.filter((rsvp) => rsvp.userId !== currentUser.uid)
-				});
+				const ownRsvp = await transaction.get(rsvpRef);
+				if (ownRsvp.exists() && Number.isInteger(ownRsvp.data().slot)) {
+					transaction.delete(
+						doc(db, 'sessions', upcomingSession.id, 'bookingSlots', String(ownRsvp.data().slot))
+					);
+				}
 				transaction.delete(rsvpRef);
 			});
 			hasBooked = false;

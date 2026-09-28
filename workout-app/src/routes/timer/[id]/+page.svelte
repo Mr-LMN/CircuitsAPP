@@ -8,9 +8,24 @@
 	} from '$lib/stationAssignments';
 	import { buildChipperGroups } from '$lib/chipper';
 	import { clampAdjustment } from '$lib/liveTimer';
+	import {
+		buildRecoveredTimerState,
+		isRecoverableLiveState,
+		recoveredPhaseClock
+	} from '$lib/liveRecovery';
 	import { suggestSessionPlan } from '$lib/sessionPlanner';
+	import { auditAssignments, autoFixAssignments, moveParticipant } from '$lib/assignmentManager';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
-	import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, Timestamp } from 'firebase/firestore';
+	import {
+		collection,
+		doc,
+		getDoc,
+		setDoc,
+		serverTimestamp,
+		onSnapshot,
+		runTransaction,
+		Timestamp
+	} from 'firebase/firestore';
 
 	export let data;
 	const { workout, sessionId } = data;
@@ -228,7 +243,15 @@
 	let isSetupVisible = false;
 	let showQr = false;
 	let showEndConfirmation = false;
+	let showRecoveryPrompt = false;
+	let confirmRecoveryReset = false;
+	let recoveredLiveState = null;
 	let sessionUnsubscribe = null;
+	let attendeesUnsubscribe = null;
+	let attendeeNames = [];
+	let selectedParticipant = '';
+	let selectedTargetStation = 0;
+	let assignmentMessage = '';
 	let connectionStatus = 'connected';
 	let wakeLock = null;
 	let activePhaseStartedAtMs = null;
@@ -356,6 +379,46 @@
 		return demand;
 	}, {});
 	$: equipmentWarnings = Object.entries(equipmentDemand).filter(([, count]) => count > 1);
+	$: assignmentAudit = auditAssignments(stationAssignments, attendeeNames);
+	$: knownParticipants = [
+		...new Set([...attendeeNames, ...stationAssignments.flat()].filter(Boolean))
+	].sort();
+
+	async function persistAssignments(nextAssignments, message) {
+		if (!sessionRef || isChipperMode) return;
+		try {
+			await runTransaction(db, async (transaction) => {
+				const snapshot = await transaction.get(sessionRef);
+				if (!snapshot.exists()) throw new Error('Session no longer exists');
+				transaction.set(
+					sessionRef,
+					{ stationAssignments: serialiseStationAssignments(nextAssignments, totalStations) },
+					{ merge: true }
+				);
+			});
+			stationAssignments = nextAssignments;
+			assignmentInputs = nextAssignments.map((codes) => codes.join(', '));
+			assignmentMessage = message;
+			broadcastLiveState(true);
+		} catch (error) {
+			console.error('Failed to update participant assignments', error);
+			assignmentMessage = 'Unable to sync assignments – retrying may help.';
+		}
+	}
+	function moveSelectedParticipant() {
+		if (!selectedParticipant) return;
+		void persistAssignments(
+			moveParticipant(stationAssignments, selectedParticipant, Number(selectedTargetStation)),
+			`${selectedParticipant} moved to Station ${Number(selectedTargetStation) + 1}.`
+		);
+	}
+	function autoFixRoster() {
+		if (!knownParticipants.length) return;
+		void persistAssignments(
+			autoFixAssignments(knownParticipants, totalStations),
+			'Assignments balanced across all stations.'
+		);
+	}
 
 	function buildLivePayload(overrides = {}) {
 		const safeStationIndex =
@@ -377,6 +440,13 @@
 				: Math.max(0, Math.round(state.remaining * 10) / 10),
 			isRunning: state.isRunning,
 			isComplete: state.isComplete,
+			sessionStatus: state.isComplete
+				? 'complete'
+				: state.phaseIndex < 0
+					? 'ready'
+					: state.isRunning
+						? 'running'
+						: 'paused',
 			currentStation: state.currentStation,
 			currentRound: state.currentRound,
 			movesCompleted,
@@ -718,6 +788,28 @@
 		state = state;
 		broadcastLiveState(true);
 	}
+	function resumeRecoveredSession() {
+		if (!recoveredLiveState) return;
+		const recovered = buildRecoveredTimerState(recoveredLiveState);
+		const clock = recoveredPhaseClock(recoveredLiveState);
+		state = recovered;
+		activePhaseStartedAtMs = clock.startedAtMs;
+		activePhaseDuration = clock.duration;
+		showRecoveryPrompt = false;
+		if (state.isRunning) {
+			clearInterval(timerId);
+			timerId = setInterval(tick, 100);
+			tick();
+			void requestWakeLock();
+		} else {
+			state.isRunning = false;
+		}
+	}
+	function resetRecoveredSession() {
+		showRecoveryPrompt = false;
+		recoveredLiveState = null;
+		resetTimer();
+	}
 	function workoutComplete() {
 		pauseTimer();
 		state.phase = 'SESSION COMPLETE!';
@@ -809,6 +901,12 @@
 		}
 		return `${minutes}m ${String(remainder).padStart(2, '0')}s`;
 	}
+	function formatRecoveryStart(value) {
+		const date = value?.toDate?.() ?? (value ? new Date(value) : null);
+		return date && !Number.isNaN(date.getTime())
+			? date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+			: 'Earlier';
+	}
 
 	// NEW: Functions for new control buttons
 	function skipPhase() {
@@ -831,6 +929,7 @@
 		clearInterval(timerId);
 		releaseWakeLock();
 		sessionUnsubscribe?.();
+		attendeesUnsubscribe?.();
 	});
 
 	onMount(async () => {
@@ -882,16 +981,33 @@
 						assignmentInputs = normalised.map((codes) => codes.join(', '));
 					}
 				}
-				broadcastLiveState(true);
 			},
 			(error) => {
 				console.error('Session connection interrupted', error);
 				connectionStatus = navigator.onLine ? 'reconnecting' : 'offline';
 			}
 		);
+		attendeesUnsubscribe = onSnapshot(
+			collection(db, 'sessions', sessionId, 'attendees'),
+			(snapshot) => {
+				attendeeNames = snapshot.docs
+					.map((item) =>
+						String(item.data().displayName ?? '')
+							.trim()
+							.toUpperCase()
+					)
+					.filter(Boolean);
+			}
+		);
 
 		try {
-			await setDoc(liveStateRef, buildLivePayload(), { merge: true });
+			const liveSnapshot = await getDoc(liveStateRef);
+			if (liveSnapshot.exists() && isRecoverableLiveState(liveSnapshot.data())) {
+				recoveredLiveState = liveSnapshot.data();
+				showRecoveryPrompt = true;
+			} else {
+				await setDoc(liveStateRef, buildLivePayload(), { merge: true });
+			}
 		} catch (error) {
 			console.error('Failed to initialise live state', error);
 		}
@@ -1082,6 +1198,56 @@
 						Enter member or staff initials separated by commas. We'll rotate them through the
 						circuit automatically.
 					</p>
+					{#if assignmentAudit.unassigned.length || assignmentAudit.duplicates.length || assignmentAudit.emptyStations.length}
+						<div class="assignment-warning" role="status">
+							<strong>Assignment check</strong>
+							{#if assignmentAudit.unassigned.length}<span
+									>Unassigned: {assignmentAudit.unassigned.join(', ')}</span
+								>{/if}
+							{#if assignmentAudit.duplicates.length}<span
+									>Appears twice: {assignmentAudit.duplicates.join(', ')}</span
+								>{/if}
+							{#if assignmentAudit.emptyStations.length}<span
+									>Empty: {assignmentAudit.emptyStations
+										.map((index) => `Station ${index + 1}`)
+										.join(', ')}</span
+								>{/if}
+							<button
+								type="button"
+								class="ghost"
+								on:click={autoFixRoster}
+								disabled={!knownParticipants.length}>Auto-fix assignments</button
+							>
+						</div>
+					{/if}
+					{#if knownParticipants.length}
+						<div class="move-participant">
+							<label for="participant-to-move"
+								>Participant<select id="participant-to-move" bind:value={selectedParticipant}
+									><option value="">Select participant</option
+									>{#each knownParticipants as participant (participant)}<option value={participant}
+											>{participant}</option
+										>{/each}</select
+								></label
+							>
+							<label for="target-station"
+								>Move to<select id="target-station" bind:value={selectedTargetStation}
+									>{#each workout.exercises as station, index (station.id ?? index)}<option
+											value={index}>Station {index + 1} — {station.name}</option
+										>{/each}</select
+								></label
+							>
+							<button
+								type="button"
+								class="primary"
+								on:click={moveSelectedParticipant}
+								disabled={!selectedParticipant}>Move participant</button
+							>
+						</div>
+						{#if assignmentMessage}<p class="suggestion-message" role="status">
+								{assignmentMessage}
+							</p>{/if}
+					{/if}
 					<div class="assignment-grid">
 						{#each workout.exercises as station, i (station.id ?? i)}
 							<div class="assignment-card">
@@ -1148,8 +1314,67 @@
 		</div>
 	</div>
 {/if}
+{#if showRecoveryPrompt && recoveredLiveState}
+	<div class="modal-overlay" role="presentation">
+		<div
+			class="modal-content recovery-modal"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="recovery-title"
+		>
+			<p class="eyebrow">Active session found</p>
+			<h2 id="recovery-title">{workout.title}</h2>
+			<div class="recovery-grid">
+				<div>
+					<span>Started</span><strong
+						>{formatRecoveryStart(recoveredLiveState.phaseStartedAt)}</strong
+					>
+				</div>
+				<div>
+					<span>Round</span><strong
+						>{recoveredLiveState.currentRound ?? 1} / {sessionConfig.rounds}</strong
+					>
+				</div>
+				<div>
+					<span>Station</span><strong
+						>{(recoveredLiveState.currentStation ?? 0) + 1} / {totalStations}</strong
+					>
+				</div>
+				<div><span>Participants</span><strong>{assignedParticipants.length}</strong></div>
+				<div>
+					<span>Status</span><strong>{recoveredLiveState.isRunning ? 'Running' : 'Paused'}</strong>
+				</div>
+			</div>
+			{#if confirmRecoveryReset}
+				<p class="setup-warning">
+					<strong>End and reset this active session?</strong> Participant timers will return to Ready.
+				</p>
+			{/if}
+			<div class="modal-actions recovery-actions">
+				<button class="primary" type="button" on:click={resumeRecoveredSession}
+					>Resume session</button
+				>
+				{#if confirmRecoveryReset}
+					<button class="ghost" type="button" on:click={() => (confirmRecoveryReset = false)}
+						>Cancel</button
+					>
+					<button class="danger" type="button" on:click={resetRecoveredSession}
+						>Confirm end &amp; reset</button
+					>
+				{:else}
+					<button class="ghost" type="button" on:click={() => (confirmRecoveryReset = true)}
+						>End &amp; reset</button
+					>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
 
-<div class="mission-control" class:blur={isSetupVisible || showQr || showEndConfirmation}>
+<div
+	class="mission-control"
+	class:blur={isSetupVisible || showQr || showEndConfirmation || showRecoveryPrompt}
+>
 	<header class="setup-panel">
 		<div class="logo">
 			<span class="title">{workout.title}</span>
@@ -1430,6 +1655,47 @@
 		max-width: 520px;
 		overflow: visible;
 	}
+	.recovery-modal {
+		max-width: 620px;
+		overflow: visible;
+	}
+	.recovery-modal h2 {
+		font-family: var(--font-display);
+		font-size: clamp(2.2rem, 8vw, 4rem);
+		line-height: 1;
+	}
+	.recovery-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+		gap: 0.6rem;
+	}
+	.recovery-grid div {
+		display: grid;
+		gap: 0.2rem;
+		padding: 0.75rem;
+		border-radius: 14px;
+		background: var(--surface-1);
+	}
+	.recovery-grid span {
+		color: var(--text-muted);
+		font-size: 0.7rem;
+		font-weight: 900;
+		text-transform: uppercase;
+	}
+	.recovery-actions {
+		flex-wrap: wrap;
+	}
+	.recovery-actions button {
+		min-height: 44px;
+		border-radius: 999px;
+		padding: 0.75rem 1.1rem;
+		font-weight: 900;
+		cursor: pointer;
+	}
+	.recovery-actions .primary {
+		background: var(--brand-green);
+		color: #052e16;
+	}
 	.confirm-modal p {
 		color: var(--text-secondary);
 	}
@@ -1483,6 +1749,52 @@
 		margin-bottom: 0.8rem;
 		color: var(--success);
 		font-size: 0.88rem;
+	}
+	.assignment-warning {
+		display: grid;
+		gap: 0.35rem;
+		margin-bottom: 0.8rem;
+		padding: 0.8rem;
+		border: 1px solid rgba(250, 204, 21, 0.32);
+		border-radius: 14px;
+		background: rgba(250, 204, 21, 0.08);
+		color: var(--text-secondary);
+	}
+	.assignment-warning .ghost {
+		width: fit-content;
+		min-height: 44px;
+		margin-top: 0.35rem;
+	}
+	.move-participant {
+		display: grid;
+		grid-template-columns: 1fr 1fr auto;
+		gap: 0.6rem;
+		align-items: end;
+		margin-bottom: 0.9rem;
+	}
+	.move-participant label {
+		display: grid;
+		gap: 0.35rem;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		font-weight: 800;
+	}
+	.move-participant select {
+		min-height: 44px;
+	}
+	.move-participant .primary {
+		min-height: 44px;
+		border-radius: 12px;
+		padding: 0.7rem 1rem;
+		background: var(--brand-green);
+		color: #052e16;
+		font-weight: 900;
+		cursor: pointer;
+	}
+	@media (max-width: 640px) {
+		.move-participant {
+			grid-template-columns: 1fr;
+		}
 	}
 	.modal-actions {
 		display: flex;

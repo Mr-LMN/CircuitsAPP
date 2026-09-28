@@ -47,6 +47,7 @@ You can preview the production build with `npm run preview`.
 npm run check
 npm run lint
 npm test
+npm run test:emulator
 ```
 
 ## Firestore security and data compatibility
@@ -58,11 +59,16 @@ your Firebase project, create the required admin profile explicitly, then deploy
 firebase deploy --only firestore:rules
 ```
 
-Session booking now writes both the existing `sessions.rsvps` array and a uniquely keyed
-`sessions/{sessionId}/rsvps/{userId}` document in one transaction. Existing sessions remain readable;
-new bookings can therefore migrate gradually without breaking historical data. Optional `capacity`
-and `organisationId` fields are backwards-compatible: omitted values retain the original unlimited,
-single-organisation behaviour.
+Session booking reads the existing `sessions.rsvps` array for compatibility and writes new bookings to
+the uniquely keyed `sessions/{sessionId}/rsvps/{userId}` path. Capacity-limited sessions also claim a
+transactional booking slot so two participants cannot take the final place. Existing sessions remain
+readable while new bookings migrate away from mutable arrays. Optional `capacity` and `organisationId`
+fields are backwards-compatible: omitted values retain the original unlimited, single-organisation
+behaviour.
 
 The rules file is intentionally not deployed automatically. Test it with the Firebase Emulator Suite
 and confirm the first coach/admin account before applying it to production.
+
+The emulator suite now covers unauthenticated access, participant isolation, coach live-state control,
+participant score/attendee writes, duplicate booking, cancellation, capacity and concurrent attempts
+to claim the final place. A passing `npm run test:emulator` is required before rules changes are deployed.
