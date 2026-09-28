@@ -26,7 +26,12 @@ export interface Workout {
 	mode: WorkoutMode;
 	exercises: Exercise[];
 	organisationId?: string;
+	creatorId?: string;
+	notes?: string;
 }
+
+export type UserRole = 'coach' | 'staff' | 'student';
+export type SessionType = 'staff-class' | 'student-led' | 'quick';
 
 export interface LiveState {
 	phase: string;
@@ -56,6 +61,11 @@ export interface Session {
 	id: string;
 	workoutId: string;
 	date: Timestamp | Date;
+	startsAt?: Timestamp | Date;
+	sessionDate?: Timestamp | Date;
+	durationMinutes?: number;
+	sessionType?: SessionType;
+	creatorRole?: UserRole;
 	creatorId?: string;
 	organisationId?: string;
 	capacity?: number;
@@ -68,6 +78,7 @@ export interface Profile {
 	displayName?: string;
 	email?: string;
 	isAdmin?: boolean;
+	role?: UserRole;
 	organisationId?: string;
 }
 

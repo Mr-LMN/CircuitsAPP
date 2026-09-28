@@ -6,6 +6,9 @@
 	import { collection, query, where, getDocs, deleteDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 	import { duplicateWorkoutData } from '$lib/duplication';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import ShareWorkout from '$lib/components/ShareWorkout.svelte';
+	import { notify } from '$lib/toasts';
+	import { quickSessionData } from '$lib/sessionFactory';
         import { goto } from '$app/navigation';
         import { resolve } from '$app/paths';
         import { loading, user } from '$lib/store';
@@ -101,6 +104,19 @@
 		// We'll build the live timer view in a future step
                 goto(resolve(`/timer/${id}`));
         }
+
+	async function startQuickSession(workout) {
+		const currentUser = get(user);
+		if (!currentUser?.uid) return;
+		try {
+			const created = await addDoc(collection(db, 'sessions'), { ...quickSessionData(workout, currentUser.uid), createdAt: serverTimestamp() });
+			notify('✓ Quick session ready', 'success');
+			goto(resolve(`/timer/${workout.id}?session_id=${created.id}`));
+		} catch (error) {
+			console.error(error);
+			notify('Could not start quick session', 'error');
+		}
+	}
 
 function groupChipperMovements(steps = []) {
                 if (!Array.isArray(steps)) return [];
@@ -240,6 +256,7 @@ function groupChipperMovements(steps = []) {
                                                 </ul>
                                         </div>
 					<div class="card-actions">
+						<ShareWorkout workoutId={workout.id} title={workout.title} />
 						<button class="action-btn edit" on:click={() => editWorkout(workout.id)}>Edit</button>
 						<button class="action-btn" on:click={() => duplicateWorkout(workout)}>Duplicate</button>
                                                 <button class="action-btn delete" on:click={() => deleteCandidate = workout}
@@ -248,6 +265,7 @@ function groupChipperMovements(steps = []) {
 						<button class="action-btn start" on:click={() => startWorkout(workout.id)}
 							>Start Session</button
 						>
+						<button class="action-btn start" on:click={() => startQuickSession(workout)}>START QUICK SESSION</button>
 					</div>
 				</div>
 			{/each}

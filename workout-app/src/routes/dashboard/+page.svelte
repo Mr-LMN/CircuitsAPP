@@ -16,10 +16,12 @@
 		runTransaction,
 		serverTimestamp
 	} from 'firebase/firestore';
-	import { isAdmin, loading, user } from '$lib/store';
+	import { isAdmin, loading, role, user } from '$lib/store';
 	import { selectRelevantSession } from '$lib/sessionSelection';
+	import { sessionStart } from '$lib/sessionDates';
 
 	let stats = { sessionsAttended: 0, personalBests: [] };
+	let recentScores = [];
 	let upcomingSession = null;
 	let userProfile = null;
 	let hasBooked = false;
@@ -28,6 +30,7 @@
 	let loadError = '';
 	let bookingMessage = '';
 	let bookingMessageType = 'idle';
+	let missedSession = null;
 
 	let lastLoadedUid = null;
 	let fetchToken = 0;
@@ -97,6 +100,7 @@
 
 			stats.sessionsAttended = attendanceSnapshot.size;
 			const scores = scoresSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+			recentScores = scores.slice(0, 5);
 			const personalBests = new Map();
 			for (const score of scores) {
 				const existingBest = personalBests.get(score.workoutId);
@@ -107,6 +111,39 @@
 			stats.personalBests = Array.from(personalBests.values());
 
 			userProfile = profileSnap.exists() ? profileSnap.data() : null;
+			const bookedSessionIds = bookedRsvpsSnapshot.docs
+				.map((rsvp) => rsvp.ref.parent.parent?.id)
+				.filter(Boolean);
+			const attendedIds = new Set(
+				attendanceSnapshot.docs.map((item) => item.data().sessionId).filter(Boolean)
+			);
+			const caughtUp = new Map(
+				scores
+					.filter((score) => score.completionType === 'catch-up' && score.sourceSessionId)
+					.map((score) => [score.sourceSessionId, score])
+			);
+			if (bookedSessionIds.length) {
+				const pastDocs = await Promise.all(
+					bookedSessionIds.slice(0, 30).map((id) => getDoc(doc(db, 'sessions', id)))
+				);
+				missedSession =
+					pastDocs
+						.filter((item) => item.exists())
+						.map((item) => ({
+							id: item.id,
+							...item.data(),
+							sessionDate: sessionStart(item.data())
+						}))
+						.filter(
+							(session) =>
+								session.sessionDate &&
+								session.sessionDate < new Date() &&
+								!attendedIds.has(session.id)
+						)
+						.sort((a, b) => b.sessionDate - a.sessionDate)[0] ?? null;
+				if (missedSession)
+					missedSession = { ...missedSession, caughtUp: caughtUp.get(missedSession.id) ?? null };
+			} else missedSession = null;
 
 			if (!sessionsSnapshot.empty) {
 				const candidates = sessionsSnapshot.docs.map((candidate) => ({
@@ -115,9 +152,6 @@
 					_document: candidate
 				}));
 				const organisationId = userProfile?.organisationId ?? null;
-				const bookedSessionIds = bookedRsvpsSnapshot.docs
-					.map((rsvp) => rsvp.ref.parent.parent?.id)
-					.filter(Boolean);
 				const selected = selectRelevantSession(candidates, {
 					userId: uid,
 					isAdmin: $isAdmin,
@@ -131,7 +165,7 @@
 					return;
 				}
 				const sessionData = sessionDoc.data();
-				const sessionDate = normaliseDate(sessionData.sessionDate);
+				const sessionDate = sessionStart(sessionData);
 
 				if (sessionDate) {
 					const rsvpSnapshot = await getDocs(collection(db, 'sessions', sessionDoc.id, 'rsvps'));
@@ -158,8 +192,10 @@
 			if (currentToken === fetchToken) {
 				loadError = 'We could not load your dashboard data. Please refresh or try again later.';
 				stats = { sessionsAttended: 0, personalBests: [] };
+				recentScores = [];
 				upcomingSession = null;
 				userProfile = null;
+				missedSession = null;
 				hasBooked = false;
 			}
 		} finally {
@@ -177,7 +213,9 @@
 			hasBooked = false;
 			upcomingSession = null;
 			userProfile = null;
+			missedSession = null;
 			stats = { sessionsAttended: 0, personalBests: [] };
+			recentScores = [];
 			isLoading = get(loading);
 			loadError = '';
 		} else if (uid !== lastLoadedUid) {
@@ -214,6 +252,14 @@
 				minute: '2-digit'
 			})
 		: '';
+	$: startsInLabel = (() => {
+		if (!upcomingSession?.sessionDate) return '';
+		const minutes = Math.round((upcomingSession.sessionDate.getTime() - Date.now()) / 60000);
+		if (minutes <= 0 || minutes > 120) return '';
+		return minutes < 60
+			? `Starts in ${minutes} min`
+			: `Starts in ${Math.floor(minutes / 60)} hr${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+	})();
 	$: coachChecklist = [
 		{
 			label: 'Create or confirm the next session',
@@ -264,6 +310,8 @@
 				transaction.set(rsvpRef, {
 					...rsvp,
 					sessionId: upcomingSession.id,
+					creatorId: upcomingSession.creatorId ?? null,
+					organisationId: upcomingSession.organisationId ?? userProfile.organisationId ?? null,
 					slot: slot?.index ?? null,
 					bookedAt: serverTimestamp()
 				});
@@ -277,7 +325,7 @@
 				]
 			};
 			bookingMessageType = 'success';
-			bookingMessage = 'Your place is booked.';
+			bookingMessage = "✓ You're attending";
 		} catch (error) {
 			console.error('Error booking spot:', error);
 			bookingMessageType = 'error';
@@ -380,6 +428,14 @@
 
 		<div class="dashboard-grid">
 			<div class="main-col">
+				{#if $role === 'student'}
+					<section class="dashboard-section">
+						<p class="eyebrow">Student training</p>
+						<h2>My Workouts</h2>
+						<p>Create, run and share your own training sessions.</p>
+						<a class="primary-btn" href={resolve('/my-workouts')}>CREATE WORKOUT</a>
+					</section>
+				{/if}
 				<section class="dashboard-section session-section">
 					<div class="section-heading">
 						<div>
@@ -407,6 +463,7 @@
 												? 'You are booked'
 												: 'Book when ready'}</span
 									>
+									{#if startsInLabel}<span>{startsInLabel}</span>{/if}
 								</div>
 							</div>
 							<div class="session-action">
@@ -417,7 +474,7 @@
 									>
 								{:else if hasBooked}
 									<button class="secondary-btn" on:click={cancelBooking} disabled={isBooking}>
-										{isBooking ? 'Updating...' : 'Cancel booking'}
+										{isBooking ? 'Updating...' : "✓ You're attending · Cancel"}
 									</button>
 								{:else}
 									<button
@@ -425,7 +482,7 @@
 										on:click={bookSpot}
 										disabled={isBooking || isSessionFull}
 									>
-										{isBooking ? 'Booking...' : isSessionFull ? 'Session full' : 'Book my spot'}
+										{isBooking ? 'Booking...' : isSessionFull ? 'SESSION FULL' : "I'M ATTENDING"}
 									</button>
 								{/if}
 							</div>
@@ -451,6 +508,40 @@
 								<a href={resolve('/admin/sessions')} class="inline-link">Create a session</a>
 							{/if}
 						</div>
+					{/if}
+				</section>
+
+				<section class="dashboard-section">
+					{#if missedSession}
+						<div class="section-heading">
+							<div>
+								<p class="eyebrow">Missed this one?</p>
+								<h2>{missedSession.workoutTitle}</h2>
+							</div>
+						</div>
+						<p>
+							{missedSession.sessionDate.toLocaleDateString('en-GB', {
+								weekday: 'long',
+								day: 'numeric',
+								month: 'long'
+							})} · {missedSession.sessionDate.toLocaleTimeString('en-GB', {
+								hour: '2-digit',
+								minute: '2-digit'
+							})}
+						</p>
+						{#if missedSession.caughtUp}<p class="booking-message">
+								✓ Caught up {normaliseDate(missedSession.caughtUp.date)?.toLocaleDateString(
+									'en-GB',
+									{ weekday: 'long' }
+								)}
+							</p>{:else}<a
+								class="primary-btn"
+								href={resolve(
+									/** @type {any} */ (
+										`/workout/${missedSession.workoutId}?source_session=${missedSession.id}`
+									)
+								)}>DO THIS WORKOUT</a
+							>{/if}
 					{/if}
 				</section>
 
@@ -483,6 +574,27 @@
 							{/each}
 						</div>
 					{/if}
+				</section>
+				<section class="dashboard-section">
+					<div class="section-heading">
+						<div>
+							<p class="eyebrow">Your training</p>
+							<h2>Recent results</h2>
+						</div>
+					</div>
+					{#if recentScores.length}<div class="pb-grid">
+							{#each recentScores as result}<div class="pb-card">
+									<span class="pb-workout-title">{result.workoutTitle}</span><span
+										>{result.completionType === 'catch-up'
+											? 'Completed independently · Catch-up'
+											: result.completionType === 'independent'
+												? 'Completed independently'
+												: 'Live session'}</span
+									><span class="pb-date"
+										>{normaliseDate(result.date)?.toLocaleDateString('en-GB') ?? 'Just now'}</span
+									>
+								</div>{/each}
+						</div>{:else}<p>No completed workouts yet.</p>{/if}
 				</section>
 			</div>
 
