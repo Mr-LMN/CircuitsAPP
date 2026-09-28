@@ -5,6 +5,7 @@
 	import { db } from '$lib/firebase';
 	import {
 		collection,
+		collectionGroup,
 		query,
 		where,
 		getDocs,
@@ -16,6 +17,7 @@
 		serverTimestamp
 	} from 'firebase/firestore';
 	import { isAdmin, loading, user } from '$lib/store';
+	import { selectRelevantSession } from '$lib/sessionSelection';
 
 	let stats = { sessionsAttended: 0, personalBests: [] };
 	let upcomingSession = null;
@@ -71,10 +73,23 @@
 				)
 			);
 			const profileQuery = getDoc(doc(db, 'profiles', uid));
-
-			const [attendanceSnapshot, scoresSnapshot, sessionsSnapshot, profileSnap] = await Promise.all(
-				[attendanceQuery, scoresQuery, sessionsQuery, profileQuery]
+			const bookedRsvpsQuery = getDocs(
+				query(collectionGroup(db, 'rsvps'), where('userId', '==', uid))
 			);
+
+			const [
+				attendanceSnapshot,
+				scoresSnapshot,
+				sessionsSnapshot,
+				profileSnap,
+				bookedRsvpsSnapshot
+			] = await Promise.all([
+				attendanceQuery,
+				scoresQuery,
+				sessionsQuery,
+				profileQuery,
+				bookedRsvpsQuery
+			]);
 
 			if (currentToken !== fetchToken) {
 				return;
@@ -94,19 +109,22 @@
 			userProfile = profileSnap.exists() ? profileSnap.data() : null;
 
 			if (!sessionsSnapshot.empty) {
-				const candidates = sessionsSnapshot.docs;
+				const candidates = sessionsSnapshot.docs.map((candidate) => ({
+					id: candidate.id,
+					...candidate.data(),
+					_document: candidate
+				}));
 				const organisationId = userProfile?.organisationId ?? null;
-				const booked = candidates.find((candidate) =>
-					(candidate.data().rsvps ?? []).some((rsvp) => rsvp.userId === uid)
-				);
-				const coached = $isAdmin
-					? candidates.find((candidate) => candidate.data().creatorId === uid)
-					: null;
-				const sameOrganisation = organisationId
-					? candidates.find((candidate) => candidate.data().organisationId === organisationId)
-					: null;
-				const legacy = candidates.find((candidate) => !candidate.data().organisationId);
-				const sessionDoc = booked ?? coached ?? sameOrganisation ?? legacy ?? null;
+				const bookedSessionIds = bookedRsvpsSnapshot.docs
+					.map((rsvp) => rsvp.ref.parent.parent?.id)
+					.filter(Boolean);
+				const selected = selectRelevantSession(candidates, {
+					userId: uid,
+					isAdmin: $isAdmin,
+					organisationId,
+					bookedSessionIds
+				});
+				const sessionDoc = selected?._document ?? null;
 				if (!sessionDoc) {
 					upcomingSession = null;
 					hasBooked = false;

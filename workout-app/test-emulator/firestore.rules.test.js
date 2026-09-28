@@ -7,13 +7,18 @@ import {
 	assertSucceeds
 } from '@firebase/rules-unit-testing';
 import {
+	collection,
+	collectionGroup,
 	doc,
+	getDocs,
 	getDoc,
 	runTransaction,
 	serverTimestamp,
 	setDoc,
 	updateDoc,
-	deleteDoc
+	deleteDoc,
+	query,
+	where
 } from 'firebase/firestore';
 
 const projectId = 'demo-circuits';
@@ -101,6 +106,21 @@ test('participant can read live state and write only their attendee and score da
 	await assertFails(
 		setDoc(doc(db, 'sessions/session/attendees/b'), { displayName: 'Participant B' })
 	);
+});
+
+test('signed-in dashboard can discover sessions and its RSVP subcollection booking', async () => {
+	await env.withSecurityRulesDisabled((context) =>
+		setDoc(doc(context.firestore(), 'sessions/session/rsvps/a'), {
+			userId: 'a',
+			sessionId: 'session'
+		})
+	);
+	const db = dbFor('a');
+	await assertSucceeds(getDocs(collection(db, 'sessions')));
+	const bookings = await assertSucceeds(
+		getDocs(query(collectionGroup(db, 'rsvps'), where('userId', '==', 'a')))
+	);
+	assert.equal(bookings.size, 1);
 });
 
 async function bookFinalPlace(db, uid) {

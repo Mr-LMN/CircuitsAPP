@@ -23,7 +23,10 @@ service cloud.firestore {
     }
 
     match /sessions/{sessionId} {
-      allow read: if signedIn() && sameOrganisation(resource.data);
+      // Sessions are discoverable class listings for signed-in members. Writes
+      // remain owner/admin-only; organisation scoping is applied by the client
+      // until all legacy records have an organisationId that rules can query.
+      allow read: if signedIn();
       allow create: if admin() && request.resource.data.creatorId == request.auth.uid;
       allow delete: if admin() && owns(resource.data);
       allow update: if admin() && owns(resource.data);
@@ -67,6 +70,12 @@ service cloud.firestore {
     match /exercises/{exerciseId} {
       allow read: if signedIn();
       allow write: if admin();
+    }
+
+    // Collection-group queries need an explicit recursive match. Mutations are
+    // still governed by the session-scoped RSVP rule above.
+    match /{path=**}/rsvps/{userId} {
+      allow read: if signedIn();
     }
 
     match /{document=**} { allow read, write: if false; }

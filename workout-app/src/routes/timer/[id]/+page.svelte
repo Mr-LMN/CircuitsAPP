@@ -14,7 +14,12 @@
 		recoveredPhaseClock
 	} from '$lib/liveRecovery';
 	import { suggestSessionPlan } from '$lib/sessionPlanner';
-	import { auditAssignments, autoFixAssignments, moveParticipant } from '$lib/assignmentManager';
+	import {
+		auditAssignments,
+		autoFixAssignments,
+		moveParticipant,
+		swapParticipants
+	} from '$lib/assignmentManager';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import {
 		collection,
@@ -250,6 +255,7 @@
 	let attendeesUnsubscribe = null;
 	let attendeeNames = [];
 	let selectedParticipant = '';
+	let selectedSwapParticipant = '';
 	let selectedTargetStation = 0;
 	let assignmentMessage = '';
 	let connectionStatus = 'connected';
@@ -384,20 +390,26 @@
 		...new Set([...attendeeNames, ...stationAssignments.flat()].filter(Boolean))
 	].sort();
 
-	async function persistAssignments(nextAssignments, message) {
+	async function persistAssignmentOperation(transformAssignments, message) {
 		if (!sessionRef || isChipperMode) return;
 		try {
-			await runTransaction(db, async (transaction) => {
+			const committedAssignments = await runTransaction(db, async (transaction) => {
 				const snapshot = await transaction.get(sessionRef);
 				if (!snapshot.exists()) throw new Error('Session no longer exists');
+				const latestAssignments = normaliseStationAssignments(
+					snapshot.data()?.stationAssignments,
+					totalStations
+				);
+				const nextAssignments = transformAssignments(latestAssignments);
 				transaction.set(
 					sessionRef,
 					{ stationAssignments: serialiseStationAssignments(nextAssignments, totalStations) },
 					{ merge: true }
 				);
+				return nextAssignments;
 			});
-			stationAssignments = nextAssignments;
-			assignmentInputs = nextAssignments.map((codes) => codes.join(', '));
+			stationAssignments = committedAssignments;
+			assignmentInputs = committedAssignments.map((codes) => codes.join(', '));
 			assignmentMessage = message;
 			broadcastLiveState(true);
 		} catch (error) {
@@ -407,15 +419,28 @@
 	}
 	function moveSelectedParticipant() {
 		if (!selectedParticipant) return;
-		void persistAssignments(
-			moveParticipant(stationAssignments, selectedParticipant, Number(selectedTargetStation)),
+		void persistAssignmentOperation(
+			(assignments) =>
+				moveParticipant(assignments, selectedParticipant, Number(selectedTargetStation)),
 			`${selectedParticipant} moved to Station ${Number(selectedTargetStation) + 1}.`
+		);
+	}
+	function swapSelectedParticipants() {
+		if (
+			!selectedParticipant ||
+			!selectedSwapParticipant ||
+			selectedParticipant === selectedSwapParticipant
+		)
+			return;
+		void persistAssignmentOperation(
+			(assignments) => swapParticipants(assignments, selectedParticipant, selectedSwapParticipant),
+			`${selectedParticipant} and ${selectedSwapParticipant} swapped stations.`
 		);
 	}
 	function autoFixRoster() {
 		if (!knownParticipants.length) return;
-		void persistAssignments(
-			autoFixAssignments(knownParticipants, totalStations),
+		void persistAssignmentOperation(
+			() => autoFixAssignments(knownParticipants, totalStations),
 			'Assignments balanced across all stations.'
 		);
 	}
@@ -1244,6 +1269,24 @@
 								disabled={!selectedParticipant}>Move participant</button
 							>
 						</div>
+						<div class="swap-participant">
+							<label for="swap-participant"
+								>Swap with<select id="swap-participant" bind:value={selectedSwapParticipant}
+									><option value="">Select participant</option
+									>{#each knownParticipants.filter((participant) => participant !== selectedParticipant) as participant (participant)}<option
+											value={participant}>{participant}</option
+										>{/each}</select
+								></label
+							>
+							<button
+								type="button"
+								class="ghost"
+								on:click={swapSelectedParticipants}
+								disabled={!selectedParticipant ||
+									!selectedSwapParticipant ||
+									selectedParticipant === selectedSwapParticipant}>Swap participants</button
+							>
+						</div>
 						{#if assignmentMessage}<p class="suggestion-message" role="status">
 								{assignmentMessage}
 							</p>{/if}
@@ -1791,9 +1834,31 @@
 		font-weight: 900;
 		cursor: pointer;
 	}
+	.swap-participant {
+		display: flex;
+		align-items: end;
+		gap: 0.6rem;
+		margin: -0.2rem 0 0.9rem;
+	}
+	.swap-participant label {
+		display: grid;
+		flex: 1;
+		gap: 0.35rem;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		font-weight: 800;
+	}
+	.swap-participant select,
+	.swap-participant button {
+		min-height: 44px;
+	}
 	@media (max-width: 640px) {
 		.move-participant {
 			grid-template-columns: 1fr;
+		}
+		.swap-participant {
+			align-items: stretch;
+			flex-direction: column;
 		}
 	}
 	.modal-actions {
