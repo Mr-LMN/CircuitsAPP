@@ -18,7 +18,10 @@ import {
 	updateDoc,
 	deleteDoc,
 	query,
-	where
+	where,
+	orderBy,
+	limit,
+	Timestamp
 } from 'firebase/firestore';
 
 const projectId = 'demo-circuits';
@@ -44,6 +47,11 @@ beforeEach(async () => {
 			setDoc(doc(db, 'profiles/coach'), { displayName: 'Coach', isAdmin: true }),
 			setDoc(doc(db, 'profiles/a'), { displayName: 'Participant A', isAdmin: false }),
 			setDoc(doc(db, 'profiles/b'), { displayName: 'Participant B', isAdmin: false }),
+			setDoc(doc(db, 'profiles/staff'), {
+				displayName: 'Explicit Staff',
+				isAdmin: false,
+				role: 'staff'
+			}),
 			setDoc(doc(db, 'profiles/student'), {
 				displayName: 'Student',
 				isAdmin: false,
@@ -69,6 +77,54 @@ beforeEach(async () => {
 			setDoc(doc(db, 'attendance/a-record'), { userId: 'a', creatorId: 'coach' })
 		]);
 	});
+});
+
+async function runDashboardReads(uid) {
+	const db = dbFor(uid);
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+	await Promise.all([
+		assertSucceeds(getDocs(query(collection(db, 'attendance'), where('userId', '==', uid)))),
+		assertSucceeds(
+			getDocs(query(collection(db, 'scores'), where('userId', '==', uid), orderBy('date', 'desc')))
+		),
+		assertSucceeds(
+			getDocs(
+				query(
+					collection(db, 'sessions'),
+					where('sessionDate', '>=', today),
+					orderBy('sessionDate', 'asc'),
+					limit(25)
+				)
+			)
+		),
+		assertSucceeds(getDoc(doc(db, 'profiles', uid))),
+		assertSucceeds(getDocs(query(collectionGroup(db, 'rsvps'), where('userId', '==', uid))))
+	]);
+	await assertSucceeds(getDoc(doc(db, 'sessions/session')));
+	await assertSucceeds(getDocs(collection(db, 'sessions/session/rsvps')));
+}
+
+test('all dashboard reads work for legacy and explicit staff profiles', async () => {
+	await env.withSecurityRulesDisabled(async (context) => {
+		const db = context.firestore();
+		await Promise.all([
+			updateDoc(doc(db, 'sessions/session'), {
+				sessionDate: Timestamp.fromDate(new Date(Date.now() + 86_400_000))
+			}),
+			setDoc(doc(db, 'sessions/session/rsvps/a'), { userId: 'a', sessionId: 'session' }),
+			setDoc(doc(db, 'sessions/session/rsvps/staff'), { userId: 'staff', sessionId: 'session' }),
+			updateDoc(doc(db, 'scores/a-score'), { date: Timestamp.now() }),
+			setDoc(doc(db, 'scores/staff-score'), {
+				userId: 'staff',
+				workoutId: 'workout',
+				score: 8,
+				date: Timestamp.now()
+			})
+		]);
+	});
+	await runDashboardReads('a');
+	await runDashboardReads('staff');
 });
 
 const dbFor = (uid) => env.authenticatedContext(uid).firestore();

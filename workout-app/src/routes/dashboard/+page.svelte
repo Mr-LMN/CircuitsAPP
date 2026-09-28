@@ -31,6 +31,7 @@
 	let bookingMessage = '';
 	let bookingMessageType = 'idle';
 	let missedSession = null;
+	let sectionErrors = {};
 
 	let lastLoadedUid = null;
 	let fetchToken = 0;
@@ -52,34 +53,29 @@
 		return null;
 	}
 
+	async function readDashboardSection(name, read, fallback) {
+		try {
+			return await read();
+		} catch (error) {
+			console.error(`[dashboard:${name}] Firestore read failed`, {
+				code: error?.code ?? 'unknown',
+				message: error?.message ?? String(error)
+			});
+			sectionErrors = { ...sectionErrors, [name]: error?.code ?? 'unknown' };
+			return fallback;
+		}
+	}
+
 	async function loadDashboard(uid) {
 		const currentToken = ++fetchToken;
 		isLoading = true;
 		loadError = '';
+		sectionErrors = {};
 
 		const startOfToday = new Date();
 		startOfToday.setHours(0, 0, 0, 0);
 
 		try {
-			const attendanceQuery = getDocs(
-				query(collection(db, 'attendance'), where('userId', '==', uid))
-			);
-			const scoresQuery = getDocs(
-				query(collection(db, 'scores'), where('userId', '==', uid), orderBy('date', 'desc'))
-			);
-			const sessionsQuery = getDocs(
-				query(
-					collection(db, 'sessions'),
-					where('sessionDate', '>=', startOfToday),
-					orderBy('sessionDate', 'asc'),
-					limit(25)
-				)
-			);
-			const profileQuery = getDoc(doc(db, 'profiles', uid));
-			const bookedRsvpsQuery = getDocs(
-				query(collectionGroup(db, 'rsvps'), where('userId', '==', uid))
-			);
-
 			const [
 				attendanceSnapshot,
 				scoresSnapshot,
@@ -87,11 +83,38 @@
 				profileSnap,
 				bookedRsvpsSnapshot
 			] = await Promise.all([
-				attendanceQuery,
-				scoresQuery,
-				sessionsQuery,
-				profileQuery,
-				bookedRsvpsQuery
+				readDashboardSection(
+					'attendance',
+					() => getDocs(query(collection(db, 'attendance'), where('userId', '==', uid))),
+					{ docs: [], size: 0 }
+				),
+				readDashboardSection(
+					'training-history',
+					() =>
+						getDocs(
+							query(collection(db, 'scores'), where('userId', '==', uid), orderBy('date', 'desc'))
+						),
+					{ docs: [], size: 0 }
+				),
+				readDashboardSection(
+					'upcoming-sessions',
+					() =>
+						getDocs(
+							query(
+								collection(db, 'sessions'),
+								where('sessionDate', '>=', startOfToday),
+								orderBy('sessionDate', 'asc'),
+								limit(25)
+							)
+						),
+					{ docs: [], empty: true }
+				),
+				readDashboardSection('profile', () => getDoc(doc(db, 'profiles', uid)), null),
+				readDashboardSection(
+					'rsvp-collection-group',
+					() => getDocs(query(collectionGroup(db, 'rsvps'), where('userId', '==', uid))),
+					{ docs: [] }
+				)
 			]);
 
 			if (currentToken !== fetchToken) {
@@ -110,7 +133,9 @@
 			}
 			stats.personalBests = Array.from(personalBests.values());
 
-			userProfile = profileSnap.exists() ? profileSnap.data() : null;
+			userProfile = profileSnap?.exists()
+				? profileSnap.data()
+				: { displayName: $user?.email || 'Member' };
 			const bookedSessionIds = bookedRsvpsSnapshot.docs
 				.map((rsvp) => rsvp.ref.parent.parent?.id)
 				.filter(Boolean);
@@ -124,11 +149,19 @@
 			);
 			if (bookedSessionIds.length) {
 				const pastDocs = await Promise.all(
-					bookedSessionIds.slice(0, 30).map((id) => getDoc(doc(db, 'sessions', id)))
+					bookedSessionIds
+						.slice(0, 30)
+						.map((id) =>
+							readDashboardSection(
+								`missed-session:${id}`,
+								() => getDoc(doc(db, 'sessions', id)),
+								null
+							)
+						)
 				);
 				missedSession =
 					pastDocs
-						.filter((item) => item.exists())
+						.filter((item) => item?.exists())
 						.map((item) => ({
 							id: item.id,
 							...item.data(),
@@ -168,7 +201,11 @@
 				const sessionDate = sessionStart(sessionData);
 
 				if (sessionDate) {
-					const rsvpSnapshot = await getDocs(collection(db, 'sessions', sessionDoc.id, 'rsvps'));
+					const rsvpSnapshot = await readDashboardSection(
+						`session-rsvps:${sessionDoc.id}`,
+						() => getDocs(collection(db, 'sessions', sessionDoc.id, 'rsvps')),
+						{ docs: [] }
+					);
 					const legacyRsvps = Array.isArray(sessionData.rsvps) ? sessionData.rsvps : [];
 					const rsvpByUser = new Map(legacyRsvps.map((rsvp) => [rsvp.userId, rsvp]));
 					rsvpSnapshot.docs.forEach((rsvpDoc) => rsvpByUser.set(rsvpDoc.id, rsvpDoc.data()));
@@ -188,7 +225,7 @@
 				hasBooked = false;
 			}
 		} catch (error) {
-			console.error('Failed to load dashboard data', error);
+			console.error('[dashboard:core] Unexpected dashboard processing failure', error);
 			if (currentToken === fetchToken) {
 				loadError = 'We could not load your dashboard data. Please refresh or try again later.';
 				stats = { sessionsAttended: 0, personalBests: [] };
@@ -218,6 +255,7 @@
 			recentScores = [];
 			isLoading = get(loading);
 			loadError = '';
+			sectionErrors = {};
 		} else if (uid !== lastLoadedUid) {
 			lastLoadedUid = uid;
 			void loadDashboard(uid);
@@ -408,6 +446,12 @@
 	{:else if loadError}
 		<p class="error-state">{loadError}</p>
 	{:else}
+		{#if Object.keys(sectionErrors).length}
+			<p class="partial-warning" role="status">
+				Some optional dashboard information is temporarily unavailable. Your available session and
+				training information is shown below.
+			</p>
+		{/if}
 		<section class="metric-strip" aria-label="Dashboard overview">
 			<div class="metric-card">
 				<span class="metric-label">Sessions attended</span>
