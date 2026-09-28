@@ -3,6 +3,7 @@
 import { onMount, onDestroy } from 'svelte';
 import { db } from '$lib/firebase';
 import { collection, onSnapshot, addDoc, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 // Pre-defined options for consistency
 const CATEGORY_OPTIONS = ['Bodyweight', 'Resistance', 'Cardio Machine'];
@@ -11,6 +12,8 @@ const EQUIPMENT_OPTIONS = ['BW', 'DB', 'KB', 'BB', 'MB', 'SB', 'WB', 'RB', 'WP',
 let exercises = [];
 let isLoading = true;
 let unsubscribe = () => {};
+let actionMessage = '';
+let deleteCandidate = null;
 
 // State for the form
 let isEditing = null; // Will hold the ID of the exercise being edited
@@ -46,7 +49,7 @@ equipment: [...exercise.equipment] // Create a copy to avoid direct mutation
 
 async function saveOrUpdateExercise() {
 if (!formState.name.trim()) {
-alert('Exercise name is required.');
+actionMessage = 'Exercise name is required.';
 return;
 }
 
@@ -69,20 +72,21 @@ createdAt: serverTimestamp()
 });
 }
 resetForm(); // Clear the form after saving
+actionMessage = 'Exercise saved.';
 } catch (error) {
 console.error("Error saving exercise:", error);
-alert("Failed to save exercise.");
+actionMessage = 'Failed to save exercise.';
 }
 }
 
 async function deleteExercise(id) {
-if (confirm('Are you sure you want to permanently delete this exercise?')) {
 try {
 await deleteDoc(doc(db, 'exercises', id));
+deleteCandidate = null;
+actionMessage = 'Exercise deleted.';
 } catch (error) {
 console.error("Error deleting exercise:", error);
-alert("Failed to delete exercise.");
-}
+actionMessage = 'Failed to delete exercise.';
 }
 }
 </script>
@@ -92,6 +96,7 @@ alert("Failed to delete exercise.");
 <h1>Exercise Manager</h1>
 <p>Create and manage your master list of available exercises.</p>
 </header>
+{#if actionMessage}<p class="status-message" role="status">{actionMessage}</p>{/if}
 
 <div class="manager-layout">
 <div class="form-panel card">
@@ -150,7 +155,7 @@ alert("Failed to delete exercise.");
 </div>
 <div class="exercise-actions">
 <button on:click={() => editExercise(exercise)}>Edit</button>
-<button class="delete" on:click={() => deleteExercise(exercise.id)}>Delete</button>
+<button class="delete" on:click={() => deleteCandidate = exercise}>Delete</button>
 </div>
 </div>
 {/each}
@@ -159,6 +164,7 @@ alert("Failed to delete exercise.");
 </div>
 </div>
 </div>
+{#if deleteCandidate}<ConfirmDialog title="Delete exercise?" message={`Permanently delete ${deleteCandidate.name}?`} confirmLabel="Delete exercise" destructive onCancel={() => deleteCandidate = null} onConfirm={() => deleteExercise(deleteCandidate.id)} />{/if}
 
 <style>
 .page-container { max-width: 1400px; margin: 2rem auto; padding: 2rem; }

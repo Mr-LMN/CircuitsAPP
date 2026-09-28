@@ -5,6 +5,7 @@
 	import { db } from '$lib/firebase';
 	import {
 		collection,
+		collectionGroup,
 		getDocs,
 		addDoc,
 		serverTimestamp,
@@ -16,16 +17,22 @@
 		onSnapshot
 	} from 'firebase/firestore';
 	import { loading, user } from '$lib/store';
+	import { repeatSessionData } from '$lib/duplication';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let allWorkouts = [];
 	let upcomingSessions = [];
 	let pastSessions = [];
-	let newSession = { date: '', workoutId: '' };
+	let newSession = { date: '', workoutId: '', capacity: '' };
 	let isLoading = true;
 	let isSubmitting = false;
 	let searchTerm = '';
 	let unsubscribeSessions = () => {};
 	let currentUid = null;
+	let repeatCandidate = null;
+	let repeatDate = '';
+	let formMessage = '';
+	let deleteCandidate = null;
 
 	function formatDate(date) {
 		if (!date) return null;
@@ -44,30 +51,51 @@
 		}
 
 		try {
+			const chunks = [];
+			for (let index = 0; index < sessionIds.length; index += 30) {
+				chunks.push(sessionIds.slice(index, index + 30));
+			}
 			const attendanceSnapshots = await Promise.all(
-				sessionIds.map((id) =>
+				chunks.map((ids) =>
 					getDocs(
 						query(
 							collection(db, 'attendance'),
 							...(creatorId ? [where('creatorId', '==', creatorId)] : []),
-							where('sessionId', '==', id)
+							where('sessionId', 'in', ids)
 						)
 					)
 				)
 			);
 
-			attendanceSnapshots.forEach((snapshot, index) => {
-				const sessionId = sessionIds[index];
-				attendanceMap.set(
-					sessionId,
-					snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-				);
+			sessionIds.forEach((sessionId) => attendanceMap.set(sessionId, []));
+			attendanceSnapshots.forEach((snapshot) => {
+				snapshot.docs.forEach((docSnap) => {
+					const record = { id: docSnap.id, ...docSnap.data() };
+					if (record.sessionId && attendanceMap.has(record.sessionId)) {
+						attendanceMap.get(record.sessionId).push(record);
+					}
+				});
 			});
 		} catch (error) {
 			console.error('Failed to fetch attendance records for sessions', error);
 		}
 
 		return attendanceMap;
+	}
+
+	async function fetchModernRsvps(sessionIds) {
+		const rsvpMap = new Map(sessionIds.map((id) => [id, []]));
+		if (!sessionIds.length) return rsvpMap;
+		try {
+			const snapshot = await getDocs(collectionGroup(db, 'rsvps'));
+			snapshot.docs.forEach((item) => {
+				const sessionId = item.ref.parent.parent?.id;
+				if (sessionId && rsvpMap.has(sessionId)) rsvpMap.get(sessionId).push(item.data());
+			});
+		} catch (error) {
+			console.error('Failed to load RSVP records', error);
+		}
+		return rsvpMap;
 	}
 
 	async function watchSessions(uid) {
@@ -102,16 +130,24 @@
 				const currentToken = ++sessionUpdateToken;
 
 				void (async () => {
-					const attendanceMap = await fetchAttendanceForSessions(sessionIds, uid);
+					const [attendanceMap, modernRsvpMap] = await Promise.all([
+						fetchAttendanceForSessions(sessionIds, uid),
+						fetchModernRsvps(sessionIds)
+					]);
 
 					if (currentToken !== sessionUpdateToken) {
 						return;
 					}
 
-					const enrichedSessions = baseSessions.map((session) => ({
-						...session,
-						attendance: attendanceMap.get(session.id) ?? []
-					}));
+					const enrichedSessions = baseSessions.map((session) => {
+						const merged = new Map((session.rsvps ?? []).map((rsvp) => [rsvp.userId, rsvp]));
+						(modernRsvpMap.get(session.id) ?? []).forEach((rsvp) => merged.set(rsvp.userId, rsvp));
+						return {
+							...session,
+							rsvps: [...merged.values()],
+							attendance: attendanceMap.get(session.id) ?? []
+						};
+					});
 
 					const startOfToday = new Date();
 					startOfToday.setHours(0, 0, 0, 0);
@@ -180,19 +216,19 @@
 
 	async function createSession() {
 		if (!newSession.date || !newSession.workoutId || isSubmitting) {
-			alert('Please select a date and a workout.');
+			formMessage = 'Please select a date and a workout.';
 			return;
 		}
 
 		const currentUser = get(user);
 		if (!currentUser?.uid) {
-			alert('You need to be signed in to create sessions.');
+			formMessage = 'You need to be signed in to create sessions.';
 			return;
 		}
 
 		const selectedWorkout = allWorkouts.find((w) => w.id === newSession.workoutId);
 		if (!selectedWorkout) {
-			alert('Please choose a valid workout.');
+			formMessage = 'Please choose a valid workout.';
 			return;
 		}
 
@@ -203,27 +239,52 @@
 				sessionDate: formatDate(newSession.date),
 				workoutId: selectedWorkout.id,
 				workoutTitle: selectedWorkout.title,
+				...(Number(newSession.capacity) > 0
+					? { capacity: Math.floor(Number(newSession.capacity)) }
+					: {}),
 				rsvps: [],
 				attendance: [],
 				createdAt: serverTimestamp()
 			};
 			await addDoc(collection(db, 'sessions'), sessionData);
-			newSession = { date: '', workoutId: '' };
+			newSession = { date: '', workoutId: '', capacity: '' };
+			formMessage = 'Session created.';
 		} catch (error) {
 			console.error('Error creating session:', error);
-			alert('Failed to create session.');
+			formMessage = 'Failed to create session.';
+		} finally {
+			isSubmitting = false;
+		}
+	}
+
+	async function createRepeatedSession() {
+		const currentUser = get(user);
+		if (!repeatCandidate || !repeatDate || !currentUser?.uid || isSubmitting) return;
+		isSubmitting = true;
+		try {
+			await addDoc(collection(db, 'sessions'), {
+				...repeatSessionData(repeatCandidate, formatDate(repeatDate), currentUser.uid),
+				createdAt: serverTimestamp()
+			});
+			formMessage = `${repeatCandidate.workoutTitle} scheduled as a clean new session.`;
+			repeatCandidate = null;
+			repeatDate = '';
+		} catch (error) {
+			console.error('Failed to repeat session', error);
+			formMessage = 'Failed to repeat this session.';
 		} finally {
 			isSubmitting = false;
 		}
 	}
 
 	async function deleteSession(sessionId) {
-		if (!confirm('Are you sure you want to delete this session?')) return;
 		try {
 			await deleteDoc(doc(db, 'sessions', sessionId));
+			deleteCandidate = null;
+			formMessage = 'Session deleted.';
 		} catch (error) {
 			console.error('Error deleting session:', error);
-			alert('Failed to delete session.');
+			formMessage = 'Failed to delete session.';
 		}
 	}
 
@@ -267,10 +328,22 @@
 					{/each}
 				</select>
 			</div>
+			<div class="form-group">
+				<label for="capacity">Capacity <span>(optional)</span></label>
+				<input
+					id="capacity"
+					type="number"
+					min="1"
+					inputmode="numeric"
+					bind:value={newSession.capacity}
+					placeholder="Unlimited"
+				/>
+			</div>
 			<button type="submit" class="primary-btn" disabled={isSubmitting}>
 				{isSubmitting ? 'Creating...' : 'Create Session'}
 			</button>
 		</form>
+		{#if formMessage}<p class="form-message" role="status">{formMessage}</p>{/if}
 	</section>
 
 	<section class="sessions-list">
@@ -291,7 +364,11 @@
 									<span>{displayDate.toLocaleDateString('en-GB')}</span>
 								{/if}
 							</div>
-							<button class="delete-btn" on:click={() => deleteSession(session.id)}>&times;</button>
+							<button
+								class="delete-btn"
+								aria-label={`Delete ${session.workoutTitle}`}
+								on:click={() => (deleteCandidate = session)}>&times;</button
+							>
 						</div>
 						<div class="session-details">
 							<h3>{session.workoutTitle}</h3>
@@ -328,7 +405,11 @@
 									<span>{displayDate.toLocaleDateString('en-GB')}</span>
 								{/if}
 							</div>
-							<button class="delete-btn" on:click={() => deleteSession(session.id)}>&times;</button>
+							<button
+								class="delete-btn"
+								aria-label={`Delete ${session.workoutTitle}`}
+								on:click={() => (deleteCandidate = session)}>&times;</button
+							>
 						</div>
 						<div class="session-details">
 							<h3>{session.workoutTitle}</h3>
@@ -338,6 +419,14 @@
 						</div>
 						<div class="card-actions">
 							<a href={`/admin/results/${session.id}`} class="secondary-btn">View Results</a>
+							<button
+								type="button"
+								class="secondary-btn"
+								on:click={() => {
+									repeatCandidate = session;
+									repeatDate = '';
+								}}>Repeat session</button
+							>
 						</div>
 					</div>
 				{/each}
@@ -345,12 +434,86 @@
 		{/if}
 	</section>
 </div>
+{#if repeatCandidate}
+	<div class="repeat-overlay" role="presentation">
+		<div class="repeat-dialog" role="dialog" aria-modal="true" aria-labelledby="repeat-title">
+			<form on:submit|preventDefault={createRepeatedSession}>
+				<h2 id="repeat-title">Repeat {repeatCandidate.workoutTitle}</h2>
+				<p>
+					Timing and capacity will be copied. Bookings, attendance, scores, live state and
+					assignments will start clean.
+				</p>
+				<label for="repeat-date"
+					>New session date<input
+						id="repeat-date"
+						type="date"
+						bind:value={repeatDate}
+						required
+					/></label
+				>
+				<div class="repeat-actions">
+					<button type="button" class="secondary-btn" on:click={() => (repeatCandidate = null)}
+						>Cancel</button
+					><button type="submit" class="primary-btn" disabled={isSubmitting}
+						>{isSubmitting ? 'Scheduling…' : 'Schedule repeat'}</button
+					>
+				</div>
+			</form>
+		</div>
+	</div>
+{/if}
+{#if deleteCandidate}<ConfirmDialog
+		title="Delete session?"
+		message={`Delete ${deleteCandidate.workoutTitle}? This does not automatically remove historical score documents.`}
+		confirmLabel="Delete session"
+		destructive
+		onCancel={() => (deleteCandidate = null)}
+		onConfirm={() => deleteSession(deleteCandidate.id)}
+	/>{/if}
 
 <style>
 	.page-container {
 		width: min(1400px, 100%);
 		margin: 0 auto;
 		padding: clamp(0.5rem, 2vw, 1rem) 0 2rem;
+	}
+	.form-message {
+		margin-top: 0.75rem;
+		color: var(--text-secondary);
+		font-weight: 800;
+	}
+	.repeat-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1000;
+		display: grid;
+		place-items: center;
+		padding: 1rem;
+		background: rgba(2, 6, 23, 0.82);
+		backdrop-filter: blur(8px);
+	}
+	.repeat-dialog {
+		width: min(520px, 100%);
+		padding: 1.5rem;
+		border: 1px solid var(--border-color);
+		border-radius: 24px;
+		background: var(--bg-panel);
+		box-shadow: var(--shadow-card);
+	}
+	.repeat-dialog p {
+		color: var(--text-secondary);
+	}
+	.repeat-dialog label {
+		display: grid;
+		gap: 0.45rem;
+		margin-top: 0.8rem;
+		color: var(--text-muted);
+		font-weight: 800;
+	}
+	.repeat-actions {
+		display: flex;
+		gap: 0.6rem;
+		margin-top: 0.8rem;
 	}
 
 	.page-header {

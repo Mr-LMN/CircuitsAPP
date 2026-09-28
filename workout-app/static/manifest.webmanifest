@@ -1,0 +1,17 @@
+{
+  "name": "CircuitsAPP",
+  "short_name": "Circuits",
+  "description": "Run live circuit classes, timers and participant scoring.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

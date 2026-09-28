@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data; }
+    function admin() { return signedIn() && profile().isAdmin == true; }
+    function sameOrganisation(data) {
+      return !('organisationId' in data) || !('organisationId' in profile()) || data.organisationId == profile().organisationId;
+    }
+    function owns(data) { return signedIn() && data.creatorId == request.auth.uid; }
+
+    match /profiles/{userId} {
+      allow read: if signedIn() && (userId == request.auth.uid || admin());
+      allow create: if signedIn() && userId == request.auth.uid && request.resource.data.isAdmin != true;
+      allow update: if signedIn() && (admin() || (userId == request.auth.uid && request.resource.data.isAdmin == resource.data.isAdmin));
+      allow delete: if admin();
+    }
+
+    match /workouts/{workoutId} {
+      allow read: if signedIn() && sameOrganisation(resource.data);
+      allow create: if admin() && request.resource.data.creatorId == request.auth.uid;
+      allow update, delete: if admin() && owns(resource.data);
+    }
+
+    match /sessions/{sessionId} {
+      // Sessions are discoverable class listings for signed-in members. Writes
+      // remain owner/admin-only; organisation scoping is applied by the client
+      // until all legacy records have an organisationId that rules can query.
+      allow read: if signedIn();
+      allow create: if admin() && request.resource.data.creatorId == request.auth.uid;
+      allow delete: if admin() && owns(resource.data);
+      allow update: if admin() && owns(resource.data);
+
+      match /rsvps/{userId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn() && (admin() || (userId == request.auth.uid && request.resource.data.userId == request.auth.uid));
+        allow delete: if signedIn() && (userId == request.auth.uid || admin());
+      }
+      match /bookingSlots/{slotId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && !exists(/databases/$(database)/documents/sessions/$(sessionId)/bookingSlots/$(slotId))
+          && request.resource.data.userId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/sessions/$(sessionId)/rsvps/$(request.auth.uid)).data.slot == int(slotId);
+        allow delete: if signedIn() && (resource.data.userId == request.auth.uid || admin());
+        allow update: if false;
+      }
+      match /attendees/{userId} {
+        allow read: if signedIn();
+        allow create, update, delete: if signedIn() && (userId == request.auth.uid || admin());
+      }
+      match /liveState/{stateId} {
+        allow read: if signedIn();
+        allow write: if admin() && owns(get(/databases/$(database)/documents/sessions/$(sessionId)).data);
+      }
+    }
+
+    match /attendance/{recordId} {
+      allow read: if signedIn() && (admin() || resource.data.userId == request.auth.uid);
+      allow create: if signedIn() && (admin() || request.resource.data.userId == request.auth.uid);
+      allow update, delete: if admin() && owns(resource.data);
+    }
+
+    match /scores/{scoreId} {
+      allow read: if signedIn() && (admin() || resource.data.userId == request.auth.uid);
+      allow create: if signedIn() && (admin() || request.resource.data.userId == request.auth.uid);
+      allow update, delete: if signedIn() && (admin() || resource.data.userId == request.auth.uid);
+    }
+
+    match /exercises/{exerciseId} {
+      allow read: if signedIn();
+      allow write: if admin();
+    }
+
+    // Collection-group queries need an explicit recursive match. Mutations are
+    // still governed by the session-scoped RSVP rule above.
+    match /{path=**}/rsvps/{userId} {
+      allow read: if signedIn();
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}

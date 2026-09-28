@@ -7,6 +7,11 @@
 		serialiseStationAssignments
 	} from '$lib/stationAssignments';
 	import { buildChipperGroups } from '$lib/chipper';
+	import { deriveRemaining } from '$lib/liveTimer';
+	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
+	import PreviousPerformance from '$lib/components/PreviousPerformance.svelte';
+	import NextStation from '$lib/components/NextStation.svelte';
+	import { selectExercisePerformance } from '$lib/performance';
 	import {
 		doc,
 		onSnapshot,
@@ -17,7 +22,10 @@
 		runTransaction,
 		deleteDoc,
 		updateDoc,
-		arrayUnion
+		arrayUnion,
+		getDocs,
+		query,
+		where
 	} from 'firebase/firestore';
 	import { user } from '$lib/store';
 
@@ -68,7 +76,6 @@
 	let isRestPhase = false;
 	let hasSessionStarted = false;
 	let showPairingControls = workout.mode === 'Partner';
-	let nextStationCategory = '';
 
 	let rosterStatus = 'idle';
 	let rosterError = '';
@@ -76,6 +83,11 @@
 
 	let myScoreRef = null;
 	let unsubscribe = [];
+	let connectionStatus = 'reconnecting';
+	let localClockId = null;
+	let lastPhaseKey = '';
+	let historicalScores = [];
+	let draftStorageKey = '';
 
 	const createEntryScore = () => ({
 		reps: '',
@@ -311,6 +323,24 @@
 		if (!userUid) return;
 
 		myScoreRef = doc(db, 'sessions', session.id, 'attendees', userUid);
+		draftStorageKey = `circuits:draft:${session.id}:${userUid}`;
+		try {
+			const saved = JSON.parse(localStorage.getItem(draftStorageKey) || 'null');
+			if (
+				saved?.expiresAt > Date.now() &&
+				Array.isArray(saved.entries) &&
+				saved.entries.length === currentEntries.length
+			)
+				currentEntries = saved.entries;
+			else localStorage.removeItem(draftStorageKey);
+		} catch {
+			localStorage.removeItem(draftStorageKey);
+		}
+		void getDocs(query(collection(db, 'scores'), where('userId', '==', userUid)))
+			.then((snapshot) => {
+				historicalScores = snapshot.docs.map((item) => item.data());
+			})
+			.catch((error) => console.info('Previous performance unavailable', error));
 
 		const profileRef = doc(db, 'profiles', userUid);
 		const unsubProfile = onSnapshot(profileRef, (docSnap) => {
@@ -320,11 +350,28 @@
 		});
 
 		const liveStateRef = doc(db, 'sessions', session.id, 'liveState', 'data');
-		const unsubState = onSnapshot(liveStateRef, (docSnap) => {
-			if (docSnap.exists()) {
-				liveState = docSnap.data();
+		const unsubState = onSnapshot(
+			liveStateRef,
+			{ includeMetadataChanges: true },
+			(docSnap) => {
+				connectionStatus = !navigator.onLine
+					? 'offline'
+					: docSnap.metadata.fromCache
+						? 'reconnecting'
+						: 'connected';
+				if (docSnap.exists()) {
+					const incoming = docSnap.data();
+					const phaseKey = `${incoming.phaseIndex ?? ''}-${incoming.currentRound ?? ''}-${incoming.currentStation ?? ''}`;
+					if (lastPhaseKey && phaseKey !== lastPhaseKey && navigator.vibrate) navigator.vibrate(40);
+					lastPhaseKey = phaseKey;
+					liveState = { ...incoming, remaining: deriveRemaining(incoming) };
+				}
+			},
+			(error) => {
+				console.error('Live timer connection interrupted', error);
+				connectionStatus = navigator.onLine ? 'reconnecting' : 'offline';
 			}
-		});
+		);
 
 		const unsubScore = onSnapshot(myScoreRef, (docSnap) => {
 			const didJoin = docSnap.exists();
@@ -344,14 +391,31 @@
 		});
 
 		unsubscribe = [unsubProfile, unsubState, unsubScore];
+		localClockId = window.setInterval(() => {
+			if (liveState?.isRunning) liveState = { ...liveState, remaining: deriveRemaining(liveState) };
+		}, 250);
+		const handleOffline = () => (connectionStatus = 'offline');
+		const handleOnline = () => (connectionStatus = 'reconnecting');
+		window.addEventListener('offline', handleOffline);
+		window.addEventListener('online', handleOnline);
 
-		return () => unsubscribe.forEach((unsub) => unsub && unsub());
+		return () => {
+			unsubscribe.forEach((unsub) => unsub && unsub());
+			window.clearInterval(localClockId);
+			window.removeEventListener('offline', handleOffline);
+			window.removeEventListener('online', handleOnline);
+		};
 	});
 
 	function setEntryScore(index, newScore) {
 		const next = [...currentEntries];
 		next[index] = { ...next[index], score: newScore };
 		currentEntries = next;
+		if (draftStorageKey)
+			localStorage.setItem(
+				draftStorageKey,
+				JSON.stringify({ entries: next, expiresAt: Date.now() + 12 * 60 * 60 * 1000 })
+			);
 	}
 
 	function setCumulativeScore(index, newScore) {
@@ -1110,6 +1174,7 @@
 			});
 
 			hasSavedFinalScore = true;
+			if (draftStorageKey) localStorage.removeItem(draftStorageKey);
 
 			const attendanceFailed = failureTypes.has('attendance-record');
 			const sessionAttendanceFailed = failureTypes.has('session-attendance');
@@ -1234,14 +1299,9 @@
 
 	$: myStationData = myCurrentStationIndex !== -1 ? workout.exercises[myCurrentStationIndex] : null;
 	$: nextStationData = myNextStationIndex !== -1 ? workout.exercises[myNextStationIndex] : null;
-	$: nextStationCategory = nextStationData
-		? normaliseCategory(
-				workout.mode === 'Partner'
-					? nextStationData.p1?.category || nextStationData.category
-					: nextStationData.category,
-				DEFAULT_CATEGORY
-			)
-		: '';
+	$: currentPerformance = myStationData
+		? selectExercisePerformance(historicalScores, myStationData.name, stationCategory)
+		: null;
 	$: intervalDuration =
 		liveState?.duration || liveState?.timing?.work || session?.timing?.work || null;
 	$: hasPendingForCurrent =
@@ -1376,6 +1436,25 @@
 	$: metricLabel = myStationData ? getMetricLabelForCategory(metricCategory) : '';
 	$: hasSessionStarted =
 		Number.isFinite(liveState?.phaseIndex) && liveState.phaseIndex >= 0 && !liveState.isComplete;
+	$: displayPhaseLabel = liveState.isComplete
+		? 'FINISHED'
+		: !liveState.isRunning && Number(liveState.phaseIndex) >= 0
+			? 'PAUSED'
+			: String(liveState.phaseType || liveState.phase || 'READY').toUpperCase();
+	$: phaseIcon =
+		displayPhaseLabel === 'WORK'
+			? '▶'
+			: displayPhaseLabel === 'REST'
+				? '●'
+				: displayPhaseLabel === 'MOVE'
+					? '→'
+					: displayPhaseLabel === 'SWAP'
+						? '⇄'
+						: displayPhaseLabel === 'PAUSED'
+							? 'Ⅱ'
+							: displayPhaseLabel === 'FINISHED'
+								? '✓'
+								: '•';
 	$: showPairingControls = workout.mode === 'Partner' && !hasSessionStarted;
 	$: {
 		if (rosterStatus === 'joining') {
@@ -1413,6 +1492,7 @@
 
 <div class="tracker-container">
 	<div class="tracker-shell">
+		<div class="connection-row"><ConnectionStatus status={connectionStatus} /></div>
 		<div class="tracker-layout" class:chipper={isChipperMode}>
 			{#if isChipperMode}
 				<section class="timer-card" aria-live="polite">
@@ -1621,9 +1701,19 @@
 					{/if}
 				{:else}
 					<aside class="session-sidebar">
-						<section class="timer-card" aria-live="polite">
+						<section
+							class="timer-card"
+							class:phase-work={displayPhaseLabel === 'WORK'}
+							class:phase-rest={displayPhaseLabel === 'REST'}
+							class:phase-move={displayPhaseLabel === 'MOVE'}
+							class:phase-swap={displayPhaseLabel === 'SWAP'}
+							class:phase-paused={displayPhaseLabel === 'PAUSED'}
+							class:phase-finished={displayPhaseLabel === 'FINISHED'}
+						>
 							<header class="timer-header">
-								<span class="phase-label">{liveState.phase}</span>
+								<span class="phase-label" role="status" aria-live="polite"
+									><b aria-hidden="true">{phaseIcon}</b> {displayPhaseLabel}</span
+								>
 							</header>
 							<div class="time-display">{formatTime(liveState.remaining)}</div>
 							{#if liveState.currentStationMeta?.category || intervalDuration}
@@ -1699,15 +1789,11 @@
 										<span class="equipment-options-values">{equipmentOptions.join(' • ')}</span>
 									</div>
 								{/if}
-								{#if myNextStationIndex !== -1}
-									<div class="station-next">
-										<h3>Next</h3>
-										<p>Station {myNextStationIndex + 1}</p>
-										{#if nextStationCategory}
-											<span class="station-chip">{nextStationCategory}</span>
-										{/if}
-									</div>
-								{/if}
+								<NextStation
+									station={nextStationData}
+									index={myNextStationIndex}
+									prominent={isRestPhase || liveState.phaseType === 'move'}
+								/>
 							</section>
 						{:else}
 							<section class="workout-overview" aria-labelledby="workout-overview-title">
@@ -1804,6 +1890,7 @@
 										{/if}
 									</div>
 								</header>
+								<PreviousPerformance performance={currentPerformance} />
 
 								{#if metricCategory === 'Cardio Machine'}
 									<div class="input-grid">
@@ -2183,6 +2270,11 @@
 		width: min(1640px, 100%);
 		margin: 0 auto;
 	}
+	.connection-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-bottom: 0.65rem;
+	}
 
 	.tracker-layout {
 		flex: 1;
@@ -2259,6 +2351,31 @@
 		gap: 0.75rem;
 		text-align: left;
 		box-shadow: 0 20px 55px rgba(0, 0, 0, 0.28);
+	}
+	.timer-card.phase-work {
+		border-color: rgba(74, 222, 128, 0.48);
+	}
+	.timer-card.phase-rest {
+		border-style: dashed;
+		border-color: rgba(56, 189, 248, 0.55);
+	}
+	.timer-card.phase-move {
+		border-color: rgba(250, 204, 21, 0.55);
+	}
+	.timer-card.phase-swap {
+		border-style: double;
+		border-width: 3px;
+		border-color: rgba(192, 132, 252, 0.55);
+	}
+	.timer-card.phase-paused {
+		border-color: rgba(251, 113, 133, 0.55);
+		background: linear-gradient(145deg, rgba(43, 20, 31, 0.94), rgba(30, 41, 59, 0.78));
+	}
+	.timer-card.phase-finished {
+		border-color: rgba(74, 222, 128, 0.65);
+	}
+	.phase-label b {
+		margin-right: 0.35rem;
 	}
 
 	.timer-header {
@@ -2571,21 +2688,6 @@
 	.equipment-options-values {
 		font-size: 0.9rem;
 		color: var(--text-secondary);
-	}
-
-	.station-next {
-		margin-top: 0.75rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-	}
-
-	.station-next h3 {
-		margin: 0;
-		font-size: 0.85rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--text-muted);
 	}
 
 	.station-chip {
