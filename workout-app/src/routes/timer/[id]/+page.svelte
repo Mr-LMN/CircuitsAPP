@@ -18,7 +18,8 @@
 		auditAssignments,
 		autoFixAssignments,
 		moveParticipant,
-		swapParticipants
+		swapParticipants,
+		suggestLateArrivalStation
 	} from '$lib/assignmentManager';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import {
@@ -253,6 +254,8 @@
 	let recoveredLiveState = null;
 	let sessionUnsubscribe = null;
 	let attendeesUnsubscribe = null;
+	let rsvpsUnsubscribe = null;
+	let bookedNames = [];
 	let attendeeNames = [];
 	let selectedParticipant = '';
 	let selectedSwapParticipant = '';
@@ -386,6 +389,9 @@
 	}, {});
 	$: equipmentWarnings = Object.entries(equipmentDemand).filter(([, count]) => count > 1);
 	$: assignmentAudit = auditAssignments(stationAssignments, attendeeNames);
+	$: bookedNotJoined = bookedNames.filter((name) => !attendeeNames.includes(name));
+	$: lateArrival = state.phaseIndex >= 0 ? (assignmentAudit.unassigned[0] ?? null) : null;
+	$: lateArrivalStation = suggestLateArrivalStation(stationAssignments, state.currentStation ?? 0);
 	$: knownParticipants = [
 		...new Set([...attendeeNames, ...stationAssignments.flat()].filter(Boolean))
 	].sort();
@@ -423,6 +429,14 @@
 			(assignments) =>
 				moveParticipant(assignments, selectedParticipant, Number(selectedTargetStation)),
 			`${selectedParticipant} moved to Station ${Number(selectedTargetStation) + 1}.`
+		);
+	}
+
+	async function assignLateArrival() {
+		if (!lateArrival || lateArrivalStation < 0) return;
+		await updateAssignments(
+			(assignments) => moveParticipant(assignments, lateArrival, lateArrivalStation),
+			`${lateArrival} assigned to Station ${lateArrivalStation + 1}`
 		);
 	}
 	function swapSelectedParticipants() {
@@ -955,6 +969,7 @@
 		releaseWakeLock();
 		sessionUnsubscribe?.();
 		attendeesUnsubscribe?.();
+		rsvpsUnsubscribe?.();
 	});
 
 	onMount(async () => {
@@ -1024,6 +1039,15 @@
 					.filter(Boolean);
 			}
 		);
+		rsvpsUnsubscribe = onSnapshot(collection(db, 'sessions', sessionId, 'rsvps'), (snapshot) => {
+			bookedNames = snapshot.docs
+				.map((item) =>
+					String(item.data().displayName ?? '')
+						.trim()
+						.toUpperCase()
+				)
+				.filter(Boolean);
+		});
 
 		try {
 			const liveSnapshot = await getDoc(liveStateRef);
@@ -1219,6 +1243,26 @@
 			{#if !isChipperMode}
 				<section class="modal-section">
 					<h3>Station Roster</h3>
+					<div class="session-summary">
+						<strong>{bookedNames.length} booked</strong><strong
+							>{attendeeNames.length} joined</strong
+						><strong
+							>{Math.max(0, attendeeNames.length - assignmentAudit.unassigned.length)} assigned</strong
+						>
+					</div>
+					{#if bookedNotJoined.length}<p class="modal-help">
+							<strong>Booked but not here:</strong>
+							{bookedNotJoined.join(', ')}
+						</p>{/if}
+					{#if lateArrival}
+						<div class="assignment-warning" role="status">
+							<strong>{lateArrival} joined late</strong><span
+								>Suggested: Station {lateArrivalStation + 1} — {workout.exercises[
+									lateArrivalStation
+								]?.name}</span
+							><button type="button" class="primary" on:click={assignLateArrival}>ASSIGN</button>
+						</div>
+					{/if}
 					<p class="modal-help">
 						Enter member or staff initials separated by commas. We'll rotate them through the
 						circuit automatically.

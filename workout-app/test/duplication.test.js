@@ -33,7 +33,8 @@ test('repeated session keeps setup but starts with clean participation data', ()
 			rsvps: [{ userId: 'a' }],
 			attendance: ['a'],
 			stationAssignments: { 0: { A: true } },
-			liveState: {}
+			liveState: {},
+			sessionNotes: 'Do not copy this'
 		},
 		new Date('2026-10-01'),
 		'coach'
@@ -44,4 +45,5 @@ test('repeated session keeps setup but starts with clean participation data', ()
 	assert.deepEqual(repeated.rsvps, []);
 	assert.deepEqual(repeated.attendance, []);
 	assert.equal('stationAssignments' in repeated, false);
+	assert.equal('sessionNotes' in repeated, false);
 });

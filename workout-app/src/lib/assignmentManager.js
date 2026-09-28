@@ -55,3 +55,14 @@ export function autoFixAssignments(participants, stationCount) {
 	);
 	return stations;
 }
+
+/** Recommend the least-loaded station, preferring the current rotation on ties. @param {string[][]} assignments @param {number} currentStation */
+export function suggestLateArrivalStation(assignments, currentStation = 0) {
+	if (!assignments.length) return -1;
+	const minimum = Math.min(...assignments.map((row) => row.length));
+	for (let offset = 0; offset < assignments.length; offset += 1) {
+		const index = (Math.max(0, currentStation) + offset) % assignments.length;
+		if (assignments[index].length === minimum) return index;
+	}
+	return 0;
+}

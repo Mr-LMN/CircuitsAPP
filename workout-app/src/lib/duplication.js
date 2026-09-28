@@ -2,13 +2,15 @@ const OMIT_WORKOUT = new Set(['id', 'createdAt', 'updatedAt', 'scores', 'attenda
 const OMIT_SESSION = new Set([
 	'id',
 	'sessionDate',
+	'startsAt',
 	'createdAt',
 	'updatedAt',
 	'rsvps',
 	'attendance',
 	'scores',
 	'liveState',
-	'stationAssignments'
+	'stationAssignments',
+	'sessionNotes'
 ]);
 
 /** @param {Record<string, unknown>} source @param {Set<string>} omitted */
@@ -31,6 +33,7 @@ export function repeatSessionData(session, sessionDate, creatorId) {
 		...structuredClone(copyWithout(session, OMIT_SESSION)),
 		creatorId,
 		sessionDate,
+		startsAt: sessionDate,
 		rsvps: [],
 		attendance: []
 	};

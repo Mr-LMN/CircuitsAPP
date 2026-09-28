@@ -4,7 +4,8 @@ import {
 	auditAssignments,
 	autoFixAssignments,
 	moveParticipant,
-	swapParticipants
+	swapParticipants,
+	suggestLateArrivalStation
 } from '../src/lib/assignmentManager.js';
 
 test('moves a participant exactly once without losing anyone', () => {
@@ -12,6 +13,11 @@ test('moves a participant exactly once without losing anyone', () => {
 		['ALEX'],
 		['JAMIE', 'SAM']
 	]);
+});
+
+test('late arrival suggestion chooses an underloaded station from the current rotation', () => {
+	assert.equal(suggestLateArrivalStation([['A'], [], []], 2), 2);
+	assert.deepEqual(moveParticipant([['A'], [], []], 'Lloyd', 2), [['A'], [], ['LLOYD']]);
 });
 
 test('swaps two assigned participants', () => {

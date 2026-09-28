@@ -8,7 +8,8 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
 	import AdminNav from '$lib/components/AdminNav.svelte';
-	import { isAdmin, loading, resetAuthState, user } from '$lib/store';
+	import ToastHost from '$lib/components/ToastHost.svelte';
+	import { isAdmin, loading, resetAuthState, role, user } from '$lib/store';
 
 	let currentPath = '/';
 	const stopWatchingPage = page.subscribe(($page) => {
@@ -39,6 +40,7 @@
 
 				let admin = false;
 				let hasProfile = false;
+				let profileRole = 'staff';
 
 				try {
 					const profileRef = doc(db, 'profiles', firebaseUser.uid);
@@ -47,6 +49,7 @@
 					if (profileSnap.exists()) {
 						const profile = profileSnap.data();
 						admin = profile.isAdmin === true;
+						profileRole = admin ? 'coach' : profile.role || 'staff';
 						hasProfile = true;
 					}
 				} catch (error) {
@@ -54,6 +57,7 @@
 				}
 
 				isAdmin.set(admin);
+				role.set(profileRole);
 
 				if (!hasProfile && currentPath !== '/account/setup') {
 					goto(resolve('/account/setup'));
@@ -88,6 +92,12 @@
 
 {#if $isAdmin}
 	<AdminNav />
+{:else if $user}
+	<nav class="member-nav">
+		<a href={resolve('/dashboard')}>Dashboard</a>{#if $role === 'student'}<a
+				href={resolve('/my-workouts')}>My Workouts</a
+			>{/if}
+	</nav>
 {/if}
 
 <div class="app-container">
@@ -102,9 +112,22 @@
 		<slot />
 	{/if}
 </div>
+<ToastHost />
 
 <style>
 	.app-container {
 		min-height: 100vh;
+	}
+	.member-nav {
+		display: flex;
+		gap: 1rem;
+		padding: 0.8rem max(1rem, calc((100vw - 1180px) / 2));
+		background: var(--surface-1);
+		border-bottom: 1px solid var(--border-color);
+	}
+	.member-nav a {
+		color: var(--text-primary);
+		font-weight: 800;
+		text-decoration: none;
 	}
 </style>

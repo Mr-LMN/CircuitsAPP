@@ -3,7 +3,9 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function profile() { return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data; }
-    function admin() { return signedIn() && profile().isAdmin == true; }
+    function coach() { return signedIn() && (profile().isAdmin == true || ('role' in profile() && profile().role == 'coach')); }
+    function student() { return signedIn() && 'role' in profile() && profile().role == 'student'; }
+    function admin() { return coach(); }
     function sameOrganisation(data) {
       return !('organisationId' in data) || !('organisationId' in profile()) || data.organisationId == profile().organisationId;
     }
@@ -11,15 +13,16 @@ service cloud.firestore {
 
     match /profiles/{userId} {
       allow read: if signedIn() && (userId == request.auth.uid || admin());
-      allow create: if signedIn() && userId == request.auth.uid && request.resource.data.isAdmin != true;
-      allow update: if signedIn() && (admin() || (userId == request.auth.uid && request.resource.data.isAdmin == resource.data.isAdmin));
+      allow create: if signedIn() && userId == request.auth.uid && request.resource.data.isAdmin != true && (!('role' in request.resource.data) || request.resource.data.role in ['staff', 'student']);
+      allow update: if signedIn() && (admin() || (userId == request.auth.uid && request.resource.data.isAdmin == resource.data.isAdmin && request.resource.data.get('role', 'staff') == resource.data.get('role', 'staff')));
       allow delete: if admin();
     }
 
     match /workouts/{workoutId} {
       allow read: if signedIn() && sameOrganisation(resource.data);
-      allow create: if admin() && request.resource.data.creatorId == request.auth.uid;
-      allow update, delete: if admin() && owns(resource.data);
+      allow create: if (coach() || student()) && request.resource.data.creatorId == request.auth.uid;
+      allow update: if (coach() || student()) && owns(resource.data) && request.resource.data.creatorId == resource.data.creatorId;
+      allow delete: if (coach() || student()) && owns(resource.data);
     }
 
     match /sessions/{sessionId} {
@@ -27,9 +30,16 @@ service cloud.firestore {
       // remain owner/admin-only; organisation scoping is applied by the client
       // until all legacy records have an organisationId that rules can query.
       allow read: if signedIn();
-      allow create: if admin() && request.resource.data.creatorId == request.auth.uid;
-      allow delete: if admin() && owns(resource.data);
-      allow update: if admin() && owns(resource.data);
+      allow create: if (coach() || student()) && request.resource.data.creatorId == request.auth.uid
+        && (coach() || (request.resource.data.sessionType == 'student-led'
+          && request.resource.data.workoutId is string
+          && get(/databases/$(database)/documents/workouts/$(request.resource.data.workoutId)).data.creatorId == request.auth.uid));
+      allow delete: if (coach() || student()) && owns(resource.data);
+      allow update: if (coach() || student()) && owns(resource.data)
+        && request.resource.data.creatorId == resource.data.creatorId
+        && (coach() || (resource.data.sessionType == 'student-led'
+          && request.resource.data.sessionType == 'student-led'
+          && request.resource.data.get('creatorRole', 'student') == resource.data.get('creatorRole', 'student')));
 
       match /rsvps/{userId} {
         allow read: if signedIn();
@@ -51,7 +61,7 @@ service cloud.firestore {
       }
       match /liveState/{stateId} {
         allow read: if signedIn();
-        allow write: if admin() && owns(get(/databases/$(database)/documents/sessions/$(sessionId)).data);
+        allow write: if (coach() || student()) && owns(get(/databases/$(database)/documents/sessions/$(sessionId)).data);
       }
     }
 
