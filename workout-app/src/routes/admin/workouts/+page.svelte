@@ -3,7 +3,9 @@
         import { onMount } from 'svelte';
         import { get } from 'svelte/store';
         import { db } from '$lib/firebase';
-        import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
+	import { collection, query, where, getDocs, deleteDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
+	import { duplicateWorkoutData } from '$lib/duplication';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
         import { goto } from '$app/navigation';
         import { resolve } from '$app/paths';
         import { loading, user } from '$lib/store';
@@ -11,6 +13,7 @@
         let workouts = [];
         let isLoading = true;
         let loadError = '';
+	let deleteCandidate = null;
 
         let lastLoadedUid = null;
 
@@ -66,21 +69,32 @@
 	const createWorkoutUrl = resolve('/admin/create');
 
         async function deleteWorkout(id) {
-                if (!confirm('Are you sure you want to delete this workout?')) {
-                        return;
-                }
                 try {
                         await deleteDoc(doc(db, 'workouts', id));
                         workouts = workouts.filter((workout) => workout.id !== id);
+			deleteCandidate = null;
                 } catch (error) {
                         console.error('Error deleting workout: ', error);
-                        alert('Failed to delete workout.');
+			loadError = 'Failed to delete workout.';
                 }
         }
 
 	function editWorkout(id) {
 		// We'll build this page in a future step
 		goto(resolve(`/admin/edit/${id}`));
+	}
+
+	async function duplicateWorkout(workout) {
+		const currentUser = get(user);
+		if (!currentUser?.uid) return;
+		try {
+			const copy = duplicateWorkoutData(workout, currentUser.uid);
+			const created = await addDoc(collection(db, 'workouts'), { ...copy, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+			goto(resolve(`/admin/edit/${created.id}`));
+		} catch (error) {
+			console.error('Failed to duplicate workout', error);
+			loadError = 'Unable to duplicate this workout. Please try again.';
+		}
 	}
 
 	function startWorkout(id) {
@@ -227,7 +241,8 @@ function groupChipperMovements(steps = []) {
                                         </div>
 					<div class="card-actions">
 						<button class="action-btn edit" on:click={() => editWorkout(workout.id)}>Edit</button>
-                                                <button class="action-btn delete" on:click={() => deleteWorkout(workout.id)}
+						<button class="action-btn" on:click={() => duplicateWorkout(workout)}>Duplicate</button>
+                                                <button class="action-btn delete" on:click={() => deleteCandidate = workout}
                                                         >Delete</button
                                                 >
 						<button class="action-btn start" on:click={() => startWorkout(workout.id)}
@@ -239,6 +254,7 @@ function groupChipperMovements(steps = []) {
 		</div>
 	{/if}
 </div>
+{#if deleteCandidate}<ConfirmDialog title="Delete workout?" message={`Permanently delete ${deleteCandidate.title}? Historical sessions and scores will not be deleted.`} confirmLabel="Delete workout" destructive onCancel={() => deleteCandidate = null} onConfirm={() => deleteWorkout(deleteCandidate.id)} />{/if}
 
 <style>
 .page-container { width: 100%; max-width: 1200px; margin: 2rem auto; padding: 2rem; }

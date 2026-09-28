@@ -1,7 +1,7 @@
 <script>
 	import '../app.css';
 	import { onDestroy, onMount } from 'svelte';
-	import { auth, db } from '$lib/firebase';
+	import { auth, db, isFirebaseConfigured } from '$lib/firebase';
 	import { onAuthStateChanged } from 'firebase/auth';
 	import { doc, getDoc } from 'firebase/firestore';
 	import { goto } from '$app/navigation';
@@ -20,6 +20,11 @@
 	});
 
 	onMount(() => {
+		if (!isFirebaseConfigured) {
+			resetAuthState();
+			return;
+		}
+
 		loading.set(true);
 
 		let active = true;
