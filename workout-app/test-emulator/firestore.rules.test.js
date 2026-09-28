@@ -18,7 +18,10 @@ import {
 	updateDoc,
 	deleteDoc,
 	query,
-	where
+	where,
+	orderBy,
+	limit,
+	Timestamp
 } from 'firebase/firestore';
 
 const projectId = 'demo-circuits';
@@ -44,6 +47,21 @@ beforeEach(async () => {
 			setDoc(doc(db, 'profiles/coach'), { displayName: 'Coach', isAdmin: true }),
 			setDoc(doc(db, 'profiles/a'), { displayName: 'Participant A', isAdmin: false }),
 			setDoc(doc(db, 'profiles/b'), { displayName: 'Participant B', isAdmin: false }),
+			setDoc(doc(db, 'profiles/staff'), {
+				displayName: 'Explicit Staff',
+				isAdmin: false,
+				role: 'staff'
+			}),
+			setDoc(doc(db, 'profiles/student'), {
+				displayName: 'Student',
+				isAdmin: false,
+				role: 'student'
+			}),
+			setDoc(doc(db, 'profiles/student2'), {
+				displayName: 'Student 2',
+				isAdmin: false,
+				role: 'student'
+			}),
 			setDoc(doc(db, 'workouts/workout'), {
 				title: 'Eight Station Circuit',
 				creatorId: 'coach',
@@ -59,6 +77,54 @@ beforeEach(async () => {
 			setDoc(doc(db, 'attendance/a-record'), { userId: 'a', creatorId: 'coach' })
 		]);
 	});
+});
+
+async function runDashboardReads(uid) {
+	const db = dbFor(uid);
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+	await Promise.all([
+		assertSucceeds(getDocs(query(collection(db, 'attendance'), where('userId', '==', uid)))),
+		assertSucceeds(
+			getDocs(query(collection(db, 'scores'), where('userId', '==', uid), orderBy('date', 'desc')))
+		),
+		assertSucceeds(
+			getDocs(
+				query(
+					collection(db, 'sessions'),
+					where('sessionDate', '>=', today),
+					orderBy('sessionDate', 'asc'),
+					limit(25)
+				)
+			)
+		),
+		assertSucceeds(getDoc(doc(db, 'profiles', uid))),
+		assertSucceeds(getDocs(query(collectionGroup(db, 'rsvps'), where('userId', '==', uid))))
+	]);
+	await assertSucceeds(getDoc(doc(db, 'sessions/session')));
+	await assertSucceeds(getDocs(collection(db, 'sessions/session/rsvps')));
+}
+
+test('all dashboard reads work for legacy and explicit staff profiles', async () => {
+	await env.withSecurityRulesDisabled(async (context) => {
+		const db = context.firestore();
+		await Promise.all([
+			updateDoc(doc(db, 'sessions/session'), {
+				sessionDate: Timestamp.fromDate(new Date(Date.now() + 86_400_000))
+			}),
+			setDoc(doc(db, 'sessions/session/rsvps/a'), { userId: 'a', sessionId: 'session' }),
+			setDoc(doc(db, 'sessions/session/rsvps/staff'), { userId: 'staff', sessionId: 'session' }),
+			updateDoc(doc(db, 'scores/a-score'), { date: Timestamp.now() }),
+			setDoc(doc(db, 'scores/staff-score'), {
+				userId: 'staff',
+				workoutId: 'workout',
+				score: 8,
+				date: Timestamp.now()
+			})
+		]);
+	});
+	await runDashboardReads('a');
+	await runDashboardReads('staff');
 });
 
 const dbFor = (uid) => env.authenticatedContext(uid).firestore();
@@ -87,6 +153,84 @@ test('coach can manage workout and authoritative live state', async () => {
 			phaseDuration: 60,
 			isRunning: true
 		})
+	);
+});
+
+test('student owns workouts and student-led sessions without gaining coach privileges', async () => {
+	const db = dbFor('student');
+	await assertSucceeds(
+		setDoc(doc(db, 'workouts/student-workout'), {
+			title: 'My circuit',
+			creatorId: 'student',
+			exercises: []
+		})
+	);
+	await assertSucceeds(
+		updateDoc(doc(db, 'workouts/student-workout'), { title: 'My updated circuit' })
+	);
+	await assertSucceeds(
+		setDoc(doc(db, 'workouts/student-copy'), {
+			title: 'My copy',
+			creatorId: 'student',
+			exercises: []
+		})
+	);
+	await assertSucceeds(deleteDoc(doc(db, 'workouts/student-copy')));
+	await assertFails(updateDoc(doc(db, 'workouts/workout'), { title: 'Not mine' }));
+	await assertFails(
+		setDoc(doc(db, 'workouts/spoofed'), { title: 'Spoofed', creatorId: 'student2' })
+	);
+	await assertSucceeds(
+		setDoc(doc(db, 'sessions/student-session'), {
+			creatorId: 'student',
+			creatorRole: 'student',
+			sessionType: 'student-led',
+			workoutId: 'student-workout'
+		})
+	);
+	await assertSucceeds(
+		setDoc(doc(db, 'sessions/student-session/liveState/data'), { phase: 'WORK' })
+	);
+	await assertFails(updateDoc(doc(db, 'sessions/student-session'), { sessionType: 'staff-class' }));
+	await assertFails(updateDoc(doc(db, 'sessions/session'), { capacity: 99 }));
+	await assertFails(
+		setDoc(doc(db, 'sessions/official'), {
+			creatorId: 'student',
+			sessionType: 'staff-class',
+			workoutId: 'student-workout'
+		})
+	);
+});
+
+test('catch-up score remains separate from source session attendance and RSVP', async () => {
+	const db = dbFor('a');
+	await assertSucceeds(
+		setDoc(doc(db, 'scores/catch-up'), {
+			userId: 'a',
+			workoutId: 'workout',
+			completionType: 'catch-up',
+			sourceSessionId: 'session',
+			exerciseScores: []
+		})
+	);
+	assert.equal(
+		(await getDocs(query(collection(db, 'attendance'), where('userId', '==', 'a')))).size,
+		1
+	);
+	assert.equal((await getDoc(doc(db, 'sessions/session/rsvps/a'))).exists(), false);
+});
+
+test('student cannot control another student session', async () => {
+	await env.withSecurityRulesDisabled((context) =>
+		setDoc(doc(context.firestore(), 'sessions/student-session'), {
+			creatorId: 'student',
+			sessionType: 'student-led',
+			workoutId: 'student-workout'
+		})
+	);
+	const db = dbFor('student2');
+	await assertFails(
+		setDoc(doc(db, 'sessions/student-session/liveState/data'), { phase: 'FINISHED' })
 	);
 });
 

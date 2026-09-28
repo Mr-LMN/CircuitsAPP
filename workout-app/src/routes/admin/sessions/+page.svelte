@@ -5,7 +5,6 @@
 	import { db } from '$lib/firebase';
 	import {
 		collection,
-		collectionGroup,
 		getDocs,
 		addDoc,
 		serverTimestamp,
@@ -14,16 +13,28 @@
 		where,
 		doc,
 		deleteDoc,
-		onSnapshot
+		updateDoc,
+		onSnapshot,
+		writeBatch,
+		Timestamp
 	} from 'firebase/firestore';
 	import { loading, user } from '$lib/store';
 	import { repeatSessionData } from '$lib/duplication';
+	import { combineLocalDateAndTime, recurrenceDates, sessionStart } from '$lib/sessionDates';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let allWorkouts = [];
 	let upcomingSessions = [];
 	let pastSessions = [];
-	let newSession = { date: '', workoutId: '', capacity: '' };
+	let newSession = {
+		date: '',
+		time: '15:15',
+		duration: '',
+		workoutId: '',
+		capacity: '',
+		repeat: 'never',
+		repeatEnd: ''
+	};
 	let isLoading = true;
 	let isSubmitting = false;
 	let searchTerm = '';
@@ -33,6 +44,7 @@
 	let repeatDate = '';
 	let formMessage = '';
 	let deleteCandidate = null;
+	let noteDrafts = {};
 
 	function formatDate(date) {
 		if (!date) return null;
@@ -42,6 +54,17 @@
 		const d = new Date(date);
 		return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 	}
+
+	function startFor(session) {
+		return sessionStart(session);
+	}
+
+	$: recurrencePreview = (() => {
+		if (newSession.repeat === 'never' || !newSession.repeatEnd) return [];
+		const first = combineLocalDateAndTime(newSession.date, newSession.time);
+		const end = combineLocalDateAndTime(newSession.repeatEnd, '23:59');
+		return recurrenceDates(first, Number(newSession.repeat), end);
+	})();
 
 	async function fetchAttendanceForSessions(sessionIds, creatorId) {
 		const attendanceMap = new Map();
@@ -87,15 +110,36 @@
 		const rsvpMap = new Map(sessionIds.map((id) => [id, []]));
 		if (!sessionIds.length) return rsvpMap;
 		try {
-			const snapshot = await getDocs(collectionGroup(db, 'rsvps'));
-			snapshot.docs.forEach((item) => {
-				const sessionId = item.ref.parent.parent?.id;
-				if (sessionId && rsvpMap.has(sessionId)) rsvpMap.get(sessionId).push(item.data());
+			const snapshots = await Promise.all(
+				sessionIds.map((id) => getDocs(collection(db, 'sessions', id, 'rsvps')))
+			);
+			snapshots.forEach((snapshot, index) => {
+				snapshot.docs.forEach((item) => rsvpMap.get(sessionIds[index]).push(item.data()));
 			});
 		} catch (error) {
 			console.error('Failed to load RSVP records', error);
 		}
 		return rsvpMap;
+	}
+
+	async function fetchCatchUpCounts(sessionIds) {
+		const counts = new Map(sessionIds.map((id) => [id, 0]));
+		try {
+			const snapshots = await Promise.all(
+				sessionIds.map((id) =>
+					getDocs(query(collection(db, 'scores'), where('sourceSessionId', '==', id)))
+				)
+			);
+			snapshots.forEach((snapshot, index) =>
+				counts.set(
+					sessionIds[index],
+					snapshot.docs.filter((item) => item.data().completionType === 'catch-up').length
+				)
+			);
+		} catch (error) {
+			console.error('Failed to load catch-up counts', error);
+		}
+		return counts;
 	}
 
 	async function watchSessions(uid) {
@@ -130,9 +174,10 @@
 				const currentToken = ++sessionUpdateToken;
 
 				void (async () => {
-					const [attendanceMap, modernRsvpMap] = await Promise.all([
+					const [attendanceMap, modernRsvpMap, catchUpCounts] = await Promise.all([
 						fetchAttendanceForSessions(sessionIds, uid),
-						fetchModernRsvps(sessionIds)
+						fetchModernRsvps(sessionIds),
+						fetchCatchUpCounts(sessionIds)
 					]);
 
 					if (currentToken !== sessionUpdateToken) {
@@ -145,7 +190,8 @@
 						return {
 							...session,
 							rsvps: [...merged.values()],
-							attendance: attendanceMap.get(session.id) ?? []
+							attendance: attendanceMap.get(session.id) ?? [],
+							catchUpCount: catchUpCounts.get(session.id) ?? 0
 						};
 					});
 
@@ -154,13 +200,13 @@
 
 					upcomingSessions = enrichedSessions
 						.filter((session) => {
-							const date = formatDate(session.sessionDate);
+							const date = startFor(session);
 							return date && date >= startOfToday;
 						})
 						.reverse();
 
 					pastSessions = enrichedSessions.filter((session) => {
-						const date = formatDate(session.sessionDate);
+						const date = startFor(session);
 						return date && date < startOfToday;
 					});
 
@@ -215,8 +261,8 @@
 	});
 
 	async function createSession() {
-		if (!newSession.date || !newSession.workoutId || isSubmitting) {
-			formMessage = 'Please select a date and a workout.';
+		if (!newSession.date || !newSession.time || !newSession.workoutId || isSubmitting) {
+			formMessage = 'Please select a date, start time and workout.';
 			return;
 		}
 
@@ -234,21 +280,47 @@
 
 		isSubmitting = true;
 		try {
+			const startsAt = combineLocalDateAndTime(newSession.date, newSession.time);
+			const dates = newSession.repeat === 'never' ? [startsAt] : recurrencePreview;
+			if (!startsAt || dates.length === 0) throw new Error('INVALID_DATES');
+			const recurrenceId = dates.length > 1 ? crypto.randomUUID() : null;
 			const sessionData = {
 				creatorId: currentUser.uid,
-				sessionDate: formatDate(newSession.date),
+				creatorRole: 'coach',
+				sessionType: 'staff-class',
 				workoutId: selectedWorkout.id,
 				workoutTitle: selectedWorkout.title,
 				...(Number(newSession.capacity) > 0
 					? { capacity: Math.floor(Number(newSession.capacity)) }
 					: {}),
+				...(Number(newSession.duration) > 0
+					? { durationMinutes: Math.floor(Number(newSession.duration)) }
+					: {}),
+				...(recurrenceId ? { recurrenceId } : {}),
 				rsvps: [],
-				attendance: [],
-				createdAt: serverTimestamp()
+				attendance: []
 			};
-			await addDoc(collection(db, 'sessions'), sessionData);
-			newSession = { date: '', workoutId: '', capacity: '' };
-			formMessage = 'Session created.';
+			const batch = writeBatch(db);
+			for (const date of dates) {
+				const ref = doc(collection(db, 'sessions'));
+				batch.set(ref, {
+					...sessionData,
+					startsAt: Timestamp.fromDate(date),
+					sessionDate: Timestamp.fromDate(date),
+					createdAt: serverTimestamp()
+				});
+			}
+			await batch.commit();
+			newSession = {
+				date: '',
+				time: '15:15',
+				duration: '',
+				workoutId: '',
+				capacity: '',
+				repeat: 'never',
+				repeatEnd: ''
+			};
+			formMessage = dates.length === 1 ? 'Session created.' : `${dates.length} sessions created.`;
 		} catch (error) {
 			console.error('Error creating session:', error);
 			formMessage = 'Failed to create session.';
@@ -288,6 +360,60 @@
 		}
 	}
 
+	async function saveNotes(session) {
+		await updateDoc(doc(db, 'sessions', session.id), {
+			sessionNotes: String(noteDrafts[session.id] ?? session.sessionNotes ?? '').trim(),
+			updatedAt: serverTimestamp()
+		});
+		formMessage = 'Session notes saved.';
+	}
+
+	function exportCsv() {
+		const quote = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+		const rows = [
+			[
+				'Date',
+				'Time',
+				'Workout',
+				'Session type',
+				'Booked',
+				'Attended',
+				'Catch-up completions',
+				'Average RPE',
+				'Session notes'
+			],
+			...pastSessions.map((session) => {
+				const start = startFor(session);
+				const rpes = (session.attendance ?? [])
+					.map((record) => Number(record.rpe))
+					.filter(Number.isFinite);
+				return [
+					start?.toLocaleDateString('en-GB') ?? '',
+					start?.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) ?? '',
+					session.workoutTitle,
+					session.sessionType || 'legacy',
+					session.rsvps?.length ?? 0,
+					session.attendance?.length ?? 0,
+					session.catchUpCount ?? '',
+					rpes.length
+						? (rpes.reduce((total, value) => total + value, 0) / rpes.length).toFixed(1)
+						: '',
+					session.sessionNotes || ''
+				];
+			})
+		];
+		const url = URL.createObjectURL(
+			new Blob([rows.map((row) => row.map(quote).join(',')).join('\r\n')], {
+				type: 'text/csv;charset=utf-8'
+			})
+		);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = 'circuits-session-history.csv';
+		link.click();
+		URL.revokeObjectURL(url);
+	}
+
 	$: filteredPastSessions = pastSessions.filter((s) =>
 		s.workoutTitle.toLowerCase().includes(searchTerm.toLowerCase())
 	);
@@ -320,6 +446,21 @@
 				<input id="sessionDate" type="date" bind:value={newSession.date} required />
 			</div>
 			<div class="form-group">
+				<label for="sessionTime">Start time</label>
+				<input id="sessionTime" type="time" bind:value={newSession.time} required />
+			</div>
+			<div class="form-group">
+				<label for="duration">Expected duration <span>(minutes, optional)</span></label>
+				<input
+					id="duration"
+					type="number"
+					min="1"
+					inputmode="numeric"
+					bind:value={newSession.duration}
+					placeholder="e.g. 45"
+				/>
+			</div>
+			<div class="form-group">
 				<label for="workout">Select Workout</label>
 				<select id="workout" bind:value={newSession.workoutId} required>
 					<option value="" disabled>Choose a workout...</option>
@@ -328,6 +469,30 @@
 					{/each}
 				</select>
 			</div>
+			<div class="form-group">
+				<label for="repeat">Repeat</label>
+				<select id="repeat" bind:value={newSession.repeat}>
+					<option value="never">Never</option><option value="1">Weekly</option><option value="2"
+						>Every 2 weeks</option
+					>
+				</select>
+			</div>
+			{#if newSession.repeat !== 'never'}
+				<div class="form-group">
+					<label for="repeatEnd">Repeat until</label>
+					<input
+						id="repeatEnd"
+						type="date"
+						min={newSession.date}
+						bind:value={newSession.repeatEnd}
+						required
+					/>
+					{#if recurrencePreview.length}<small
+							>This will create {recurrencePreview.length}
+							{recurrencePreview[0].toLocaleDateString('en-GB', { weekday: 'long' })} sessions.</small
+						>{/if}
+				</div>
+			{/if}
 			<div class="form-group">
 				<label for="capacity">Capacity <span>(optional)</span></label>
 				<input
@@ -355,13 +520,19 @@
 		{:else}
 			<div class="sessions-grid">
 				{#each upcomingSessions as session}
-					{@const displayDate = formatDate(session.sessionDate)}
+					{@const displayDate = startFor(session)}
 					<div class="session-card">
 						<div class="session-header">
 							<div class="session-date">
 								{#if displayDate}
 									<span>{displayDate.toLocaleString('en-GB', { weekday: 'long' })}</span>
 									<span>{displayDate.toLocaleDateString('en-GB')}</span>
+									<strong
+										>{displayDate.toLocaleTimeString('en-GB', {
+											hour: '2-digit',
+											minute: '2-digit'
+										})}</strong
+									>
 								{/if}
 							</div>
 							<button
@@ -372,7 +543,10 @@
 						</div>
 						<div class="session-details">
 							<h3>{session.workoutTitle}</h3>
-							<p>{session.rsvps?.length ?? 0} Attendees Booked</p>
+							<p>
+								{session.rsvps?.length ?? 0}{session.capacity ? ` / ${session.capacity}` : ''} places
+							</p>
+							{#if session.durationMinutes}<p>{session.durationMinutes} min expected</p>{/if}
 						</div>
 						<div class="card-actions">
 							<a href={`/timer/${session.workoutId}?session_id=${session.id}`} class="start-btn">
@@ -388,6 +562,7 @@
 	<section class="sessions-list">
 		<div class="list-header">
 			<h2>Past Sessions</h2>
+			<button type="button" class="secondary-btn" on:click={exportCsv}>Export CSV</button>
 			<input type="search" bind:value={searchTerm} placeholder="Search past workouts..." />
 		</div>
 		{#if isLoading}
@@ -397,7 +572,7 @@
 		{:else}
 			<div class="sessions-grid">
 				{#each filteredPastSessions as session}
-					{@const displayDate = formatDate(session.sessionDate)}
+					{@const displayDate = startFor(session)}
 					<div class="session-card past">
 						<div class="session-header">
 							<div class="session-date">
@@ -416,6 +591,18 @@
 							<p class:empty={!session.attendance?.length}>
 								{session.attendance?.length ?? 0} Attended
 							</p>
+							<p>
+								{session.rsvps?.length ?? 0} booked · {session.catchUpCount ?? 0} caught up later
+							</p>
+							<label
+								>Session notes<textarea
+									rows="2"
+									value={noteDrafts[session.id] ?? session.sessionNotes ?? ''}
+									on:input={(event) =>
+										(noteDrafts = { ...noteDrafts, [session.id]: event.currentTarget.value })}
+									placeholder="What should you remember next time?"
+								></textarea></label
+							>
 						</div>
 						<div class="card-actions">
 							<a href={`/admin/results/${session.id}`} class="secondary-btn">View Results</a>
@@ -426,6 +613,9 @@
 									repeatCandidate = session;
 									repeatDate = '';
 								}}>Repeat session</button
+							>
+							<button type="button" class="secondary-btn" on:click={() => saveNotes(session)}
+								>Save notes</button
 							>
 						</div>
 					</div>
